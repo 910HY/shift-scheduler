@@ -1,0 +1,4 @@
+Flask
+ortools
+gunicorn  # <--- 推薦用於生產的 WSGI 服務器
+# 如果你用了其他庫也要加上

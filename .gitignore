@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+myenv/
+env/
+ENV/
+
+# IDE / OS files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Log files (if any)
+*.log
+
+# Sensitive information (if using .env locally)
+.env
+
+# 可選：忽略 SQLite 數據庫文件（如果有的話）
+*.sqlite3
+*.db
