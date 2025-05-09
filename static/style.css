@@ -1,0 +1,624 @@
+/* static/style.css */
+
+/* -------------------- CSS 自定義變量 (暗色主題) -------------------- */
+:root {
+    --bg-primary: #1A2124;
+    --bg-secondary: #16191A;
+    --bg-card: #292C2E;
+    --text-primary: #EAEAEA;
+    --text-secondary: #C2C5C9;
+    --border-color: #3C4043;
+    --accent-color: #F27C0E;
+    --accent-color-hover: #FF8F23;
+    --accent-color-muted: rgba(242, 124, 14, 0.15);
+    --accent-color-focus-ring: rgba(242, 124, 14, 0.25);
+
+    --form-bg: #1E2123;
+    --form-border: #3C4043;
+    --form-text: #E9ECEF;
+    --form-placeholder: #8B9196;
+
+    --error-color: #FF5252;
+    --error-bg: rgba(255, 82, 82, 0.1);
+    --success-color: #4CAF50;
+    --success-bg: rgba(76, 175, 80, 0.1);
+    --warning-color: #FFC107;
+    --info-color: #2196F3;
+
+    --radius-sm: 0.25rem;
+    --radius-md: 0.5rem;
+}
+
+/* -------------------- 全局和 Body 樣式 -------------------- */
+body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    margin: 0;
+    padding: 20px;
+    line-height: 1.6;
+    font-size: 16px;
+}
+
+/* -------------------- 標題樣式 -------------------- */
+h1, h2, h3 {
+    color: var(--text-primary);
+    margin-top: 1.5em;
+    margin-bottom: 0.8em;
+    font-weight: 600;
+}
+
+h1 {
+    font-size: 2.2em;
+    border-bottom: 2px solid var(--accent-color);
+    padding-bottom: 0.4em;
+    text-align: center;
+    margin-bottom: 1.2em;
+}
+
+h2 {
+    font-size: 1.6em;
+    color: var(--accent-color);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.3em;
+    margin-top: 0;
+    display: flex;
+    align-items: center;
+}
+h3 {
+    font-size: 1.2em;
+    color: var(--text-secondary);
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+}
+
+/* -------------------- 卡片標題和圖標 -------------------- */
+.card-title {
+    display: flex;
+    align-items: center;
+}
+
+.card-icon-placeholder {
+    margin-right: 10px;
+    font-size: 1.2em;
+    display: inline-block;
+    line-height: 1;
+}
+
+/* -------------------- 卡片佈局 -------------------- */
+.config-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 25px;
+    margin-bottom: 30px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.25);
+}
+
+/* -------------------- 表單元素 -------------------- */
+label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 0.95em;
+}
+
+input[type="text"],
+input[type="time"],
+input[type="number"],
+input[type="email"],
+select,
+textarea {
+    background-color: var(--form-bg);
+    border: 1px solid var(--form-border);
+    color: var(--form-text);
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 15px;
+    transition: border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    font-size: 1em;
+}
+
+input[type="text"]:focus,
+input[type="time"]:focus,
+input[type="number"]:focus,
+input[type="email"]:focus,
+select:focus,
+textarea:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px var(--accent-color-focus-ring);
+    outline: none;
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: var(--form-placeholder);
+    opacity: 0.7;
+}
+
+input[type="checkbox"] {
+    width: auto;
+    margin-right: 8px;
+    vertical-align: middle;
+    accent-color: var(--accent-color);
+}
+input[type="checkbox"] + label {
+    display: inline;
+    font-weight: normal;
+    color: var(--text-primary);
+    font-size: 1em;
+    vertical-align: middle;
+    margin-bottom: 0;
+}
+div > input[type="checkbox"] + label {
+     margin-bottom: 15px;
+}
+
+
+/* -------------------- 按鈕 -------------------- */
+button {
+    background-color: var(--accent-color);
+    color: var(--text-primary);
+    border: none;
+    padding: 10px 20px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 1em;
+    transition: background-color 0.2s ease-in-out, transform 0.1s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+button:hover {
+    background-color: var(--accent-color-hover);
+    transform: translateY(-1px);
+}
+button:active {
+    transform: translateY(0px);
+}
+
+#generate-schedule-button {
+    font-size: 1.2em !important;
+    padding: 12px 25px !important;
+}
+
+button.secondary,
+#clear-jobs-button,
+#add-job-time-button,
+#print-schedule-button {
+    background-color: var(--form-border);
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    padding: 8px 15px;
+    text-transform: none;
+}
+
+button.secondary:hover,
+#clear-jobs-button:hover,
+#add-job-time-button:hover,
+#print-schedule-button:hover {
+    background-color: var(--border-color);
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+}
+
+
+/* -------------------- 通用結果表格樣式 (統計等) -------------------- */
+table.results-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+    margin-bottom: 20px;
+    background-color: var(--bg-card);
+    font-size: 0.9em;
+}
+
+table.results-table th,
+table.results-table td {
+    border: 1px solid var(--border-color);
+    padding: 8px 10px;
+    text-align: left;
+}
+
+table.results-table th {
+    background-color: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+table.results-table tr:nth-child(even) td {
+    background-color: var(--form-bg);
+}
+
+
+/* -------------------- 排班網格表格樣式 -------------------- */
+.schedule-grid-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    margin-bottom: 20px;
+    font-size: 0.85em;
+    table-layout: fixed;
+    border: 1px solid var(--border-color);
+}
+
+.schedule-grid-table th,
+.schedule-grid-table td {
+    border: 1px solid var(--border-color);
+    padding: 4px 2px;
+    text-align: center;
+    overflow: hidden;
+    white-space: nowrap;
+    height: 28px;
+    vertical-align: middle;
+}
+.schedule-grid-table th {
+    background-color: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-weight: 600;
+    padding: 6px 2px;
+}
+.schedule-grid-table thead th[rowspan="2"] {
+    vertical-align: middle;
+    background-color: #333;
+    color: var(--text-primary);
+    min-width: 70px;
+    position: sticky;
+    left: 0;
+    z-index: 2; /* Ensure it's above time headers if they also become sticky */
+    border-right: 2px solid var(--border-color);
+}
+.schedule-grid-table tbody td.employee-name-cell {
+    font-weight: bold;
+    text-align: left;
+    padding-left: 8px;
+    background-color: #333;
+    color: var(--text-primary);
+     position: sticky;
+    left: 0;
+    z-index: 1; /* Lower z-index than header's sticky */
+    border-right: 2px solid var(--border-color);
+}
+
+.schedule-grid-table tbody td {
+    background-color: var(--bg-card);
+    color: var(--text-primary);
+}
+.schedule-grid-table .task-rest {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+.schedule-grid-table .task-work {
+    font-weight: 500;
+}
+.schedule-grid-table .task-empty {
+    background-color: var(--form-bg);
+}
+.schedule-grid-table .task-unfilled {
+    background-color: var(--error-bg);
+    color: var(--error-color);
+    font-weight: bold;
+}
+
+.schedule-grid-table .sd-row td {
+    background-color: var(--bg-secondary);
+    font-size: 0.9em;
+    font-style: italic;
+    color: var(--text-secondary);
+    height: 24px;
+}
+.schedule-grid-table .sd-row td.employee-name-cell {
+     background-color: #333;
+     color: var(--text-primary);
+     font-style: normal;
+}
+
+
+/* -------------------- Chip 樣式 -------------------- */
+.chip-container {
+    margin-bottom: 15px;
+    min-height: 38px;
+    padding: 5px;
+    border: 1px dashed var(--form-border);
+    border-radius: var(--radius-sm);
+    background-color: var(--form-bg);
+}
+.chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.3em 0.7em;
+    font-size: 0.9em;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: baseline;
+    border-radius: var(--radius-md);
+    background-color: var(--accent-color-muted);
+    color: var(--accent-color);
+    margin: 4px;
+    font-weight: 500;
+}
+.delete-chip {
+    cursor: pointer;
+    margin-left: 0.6em;
+    font-weight: bold;
+    color: var(--text-secondary);
+    padding: 0 2px;
+    transition: color 0.2s ease;
+}
+.delete-chip:hover {
+    color: var(--error-color);
+}
+
+/* -------------------- 錯誤/加載/狀態提示 -------------------- */
+#error-message {
+    background-color: var(--error-bg);
+    color: var(--error-color);
+    padding: 12px 15px;
+    border: 1px solid var(--error-color);
+    border-radius: var(--radius-sm);
+    margin-bottom: 20px;
+    font-weight: 500;
+}
+
+#loading-indicator {
+    text-align: center;
+    padding: 20px;
+    font-size: 1.2em;
+    color: var(--accent-color);
+    font-weight: bold;
+}
+
+#result-status {
+    font-weight: bold;
+    margin-bottom: 15px;
+    padding: 10px;
+    border-radius: var(--radius-sm);
+    background-color: var(--form-bg);
+    border: 1px solid var(--border-color);
+    border-left-width: 5px;
+    border-left-color: var(--border-color);
+}
+#result-status.optimal, #result-status.feasible {
+    color: var(--success-color);
+    border-left-color: var(--success-color);
+    background-color: var(--success-bg);
+}
+#result-status.infeasible {
+    color: var(--error-color);
+    border-left-color: var(--error-color);
+    background-color: var(--error-bg);
+}
+
+
+/* -------------------- Footer 樣式 -------------------- */
+footer {
+    text-align: center;
+    padding: 20px;
+    margin-top: 40px;
+    background-color: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    border-top: 1px solid var(--border-color);
+}
+footer a {
+    color: var(--accent-color);
+    text-decoration: none;
+    font-weight: 500;
+}
+footer a:hover {
+    text-decoration: underline;
+    color: var(--accent-color-hover);
+}
+
+/* -------------------- 聯繫表單模態框樣式 -------------------- */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0s linear 0.3s;
+}
+.modal-overlay.active {
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+}
+
+.modal-content {
+    background-color: var(--bg-card);
+    padding: 30px 35px;
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.4);
+    width: 90%;
+    max-width: 550px;
+    position: relative;
+    border: 1px solid var(--border-color);
+    transform: scale(0.95);
+    transition: transform 0.3s ease;
+}
+.modal-overlay.active .modal-content {
+    transform: scale(1);
+}
+
+.modal-content h3 {
+    margin-top: 0;
+    color: var(--accent-color);
+    text-align: center;
+    margin-bottom: 25px;
+    font-size: 1.4em;
+}
+
+.close-modal-button {
+    position: absolute;
+    top: 10px;
+    right: 15px;
+    font-size: 2em;
+    font-weight: bold;
+    color: var(--text-secondary);
+    cursor: pointer;
+    line-height: 1;
+    padding: 5px;
+    transition: color 0.2s ease;
+}
+.close-modal-button:hover {
+    color: var(--text-primary);
+}
+
+#contact-form div {
+    margin-bottom: 18px;
+}
+#contact-form label {
+    font-weight: 500;
+}
+#contact-form button[type="submit"] {
+    width: auto;
+    float: right;
+    margin-top: 5px;
+}
+#contact-form::after {
+    content: "";
+    display: table;
+    clear: both;
+}
+
+#form-status {
+    text-align: center;
+    font-weight: bold;
+    padding: 10px;
+    border-radius: var(--radius-sm);
+    margin-top: 15px;
+    display: none;
+    clear: both;
+}
+#form-status.success {
+    background-color: var(--success-bg);
+    color: var(--success-color);
+    display: block;
+}
+#form-status.error {
+    background-color: var(--error-bg);
+    color: var(--error-color);
+    display: block;
+}
+
+/* -------------------- 其他輔助樣式 -------------------- */
+.text-accent { color: var(--accent-color); }
+.text-secondary { color: var(--text-secondary); }
+.print-hide { /* Styles for non-print are default or handled by other rules */ }
+
+
+/* -------------------- 打印樣式 -------------------- */
+@media print {
+    @page {
+        size: A4 landscape;
+        margin: 10mm;
+    }
+
+    body {
+        background-color: white !important; color: black !important; font-size: 8pt;
+        margin: 0 !important; padding: 0 !important; width: 100% !important;
+        -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important;
+    }
+
+    h1, .config-card:not(#schedule-results), footer, #controls-area, #loading-indicator,
+    #error-message, .print-hide, #contact-modal {
+        display: none !important; visibility: hidden !important; margin: 0 !important;
+        padding: 0 !important; height: 0 !important; overflow: hidden !important;
+    }
+
+    #schedule-results {
+        display: block !important; visibility: visible !important; border: none !important;
+        box-shadow: none !important; padding: 0 !important; margin: 0 !important;
+        width: 100% !important; height: auto !important; overflow: visible !important;
+    }
+    #schedule-results h2 {
+        font-size: 14pt; text-align: center; border-bottom: 1px solid #ccc;
+        padding-bottom: 5px; margin-bottom: 10px; color: black !important; page-break-after: avoid;
+    }
+    #schedule-results h3 {
+        font-size: 11pt; color: black !important; margin-top: 15px; margin-bottom: 5px;
+        border-bottom: 1px dotted #eee; padding-bottom: 3px; page-break-after: avoid;
+    }
+
+    #result-status {
+        display: block !important; visibility: visible !important; border: 1px solid #ddd !important;
+        padding: 5px !important; margin-bottom: 10px !important; background-color: #f9f9f9 !important;
+        color: black !important; font-size: 9pt; text-align: left; page-break-inside: avoid;
+        border-left: none !important;
+    }
+
+    .schedule-grid-table {
+        font-size: 7pt; width: 100% !important; table-layout: fixed;
+        border: 1px solid #999 !important; page-break-inside: auto; border-spacing: 0;
+    }
+    .schedule-grid-table th, .schedule-grid-table td {
+        border: 1px solid #bbb !important; padding: 1px 1px !important; text-align: center !important;
+        overflow: hidden !important; white-space: nowrap !important; color: black !important;
+        background-color: white !important; word-break: keep-all; height: auto !important;
+        vertical-align: middle !important;
+    }
+    .schedule-grid-table thead th { background-color: #eee !important; font-weight: bold; }
+    .schedule-grid-table thead th[rowspan="2"],
+    .schedule-grid-table tbody td.employee-name-cell,
+    .schedule-grid-table .sd-row td.employee-name-cell {
+        background-color: #ddd !important; position: static !important; border-right: 1px solid #999 !important;
+    }
+    .schedule-grid-table .task-rest { color: #555 !important; font-style: normal; }
+    .schedule-grid-table .task-work { font-weight: normal; }
+    .schedule-grid-table .task-empty { background-color: white !important; }
+    .schedule-grid-table .task-unfilled { background-color: #ffe0e0 !important; color: red !important; font-weight: bold; }
+    .schedule-grid-table .sd-row td { background-color: #f0f0f0 !important; color: #333 !important; font-style: normal; }
+
+    table.results-table {
+        font-size: 8pt; background-color: transparent !important; width: 100% !important;
+        margin-top: 10px; border-spacing: 0; page-break-inside: auto;
+    }
+    table.results-table th, table.results-table td {
+        border: 1px solid #bbb !important; padding: 2px 4px !important; color: black !important; word-break: break-all;
+    }
+    table.results-table th { background-color: #e8e8e8 !important; font-weight: bold; }
+    table.results-table tr:nth-child(even) td { background-color: #fdfdfd !important; }
+
+    tr { page-break-inside: avoid !important; }
+    h2, h3, p { page-break-after: avoid; }
+    #schedule-results > div { page-break-inside: avoid; }
+}
+
+/* -------------------- 媒體查詢 (響應式) -------------------- */
+@media (max-width: 768px) {
+    body { padding: 10px; font-size: 15px; }
+    .config-card { padding: 15px; margin-bottom: 20px; }
+    h1 { font-size: 1.8em; }
+    h2 { font-size: 1.4em; }
+    button { width: 100%; margin-top: 10px; }
+    button.secondary { width: auto; margin-top: 5px; }
+    #controls-area button { width: auto; padding: 12px 25px !important; }
+    #job-definition-card div[style*="display: flex"] { flex-direction: column; gap: 5px !important; }
+    #job-definition-card div[style*="display: flex"] select,
+    #job-definition-card div[style*="display: flex"] input[type="text"] /* If you revert job time to text */
+    { margin-bottom: 10px; }
+    #job-definition-card div[style*="display: flex"] span { display: none; }
+    #job-definition-card div[style*="display: flex"] button { width: 100%; }
+    .modal-content { padding: 20px; }
+    .schedule-grid-table { font-size: 0.8em; }
+}
+@media (max-width: 480px) {
+     h1 { font-size: 1.6em; }
+     h2 { font-size: 1.2em; }
+     .schedule-grid-table { font-size: 0.7em; }
+     .schedule-grid-table th, .schedule-grid-table td { padding: 2px 1px; }
+}
