@@ -43,12 +43,12 @@ function showError(message) {
         errorMessageDiv.textContent = message;
         errorMessageDiv.style.display = 'block';
     } else {
-        alert(message);
+        alert(message); // Fallback
     }
 }
 function generateHtmlTable(dataArray, columns, headers = {}) {
     if (!dataArray || dataArray.length === 0) return "<p>無數據可顯示。</p>";
-    let tableHtml = "<table class='results-table'><thead><tr>"; // Add a class for styling
+    let tableHtml = "<table class='results-table'><thead><tr>";
     columns.forEach(col => { tableHtml += `<th>${headers[col] || col}</th>`; });
     tableHtml += "</tr></thead><tbody>";
     dataArray.forEach(row => {
@@ -79,8 +79,8 @@ function jsSlotToTimeStr(slotIndex) {
  function jsParseTimeRange(rangeStr) {
     if (!rangeStr || typeof rangeStr !== 'string') return [null, null];
     let parts;
-    if (rangeStr.includes('–')) parts = rangeStr.split('–');
-    else if (rangeStr.includes('-')) parts = rangeStr.split('-');
+    if (rangeStr.includes('–')) parts = rangeStr.split('–'); // EN DASH
+    else if (rangeStr.includes('-')) parts = rangeStr.split('-'); // HYPHEN
     else return [null, null];
     if (parts.length !== 2) return [null, null];
     const startSlot = jsTimeToSlot(parts[0].trim());
@@ -114,32 +114,19 @@ function formatGridAsTable(gridData, unfilledSlots, schedulePeriodStr, status) {
     table.className = 'schedule-grid-table';
 
     const thead = table.createTHead();
-    const headerRow1 = thead.insertRow();
-    const headerRow2 = thead.insertRow();
-
+    const headerRow = thead.insertRow();
     const thEmpName = document.createElement('th');
-    thEmpName.rowSpan = 2;
     thEmpName.textContent = '員工';
-    headerRow1.appendChild(thEmpName);
+    headerRow.appendChild(thEmpName);
 
-    let currentHour = -1;
-    let hourCell = null;
     for (let i = 0; i < numSlots; i++) {
         const sAbs = i + startSlotAbs;
-        const hour = Math.floor(sAbs / 2) % 24;
-        const minute = (sAbs % 2) * 30;
-        if (hour !== currentHour) {
-            hourCell = document.createElement('th');
-            hourCell.colSpan = 1;
-            hourCell.textContent = String(hour).padStart(2, '0');
-            headerRow1.appendChild(hourCell);
-            currentHour = hour;
-        } else if (hourCell) {
-            hourCell.colSpan++;
-        }
-        const thMinute = document.createElement('th');
-        thMinute.textContent = String(minute).padStart(2, '0');
-        headerRow2.appendChild(thMinute);
+        const h = Math.floor(sAbs / 2);
+        const m = (sAbs % 2) * 30;
+        const timeHeader = `${String(h).padStart(2, '0')}${String(m).padStart(2, '0')}`;
+        const thTime = document.createElement('th');
+        thTime.textContent = timeHeader;
+        headerRow.appendChild(thTime);
     }
 
     const tbody = table.createTBody();
@@ -152,6 +139,7 @@ function formatGridAsTable(gridData, unfilledSlots, schedulePeriodStr, status) {
         const cellEmpName = row.insertCell();
         cellEmpName.textContent = empKey;
         cellEmpName.className = 'employee-name-cell';
+
         const schedule = gridData && gridData[empKey] ? gridData[empKey] : Array(numSlots).fill('');
         for (let i = 0; i < numSlots; i++) {
             const cell = row.insertCell();
@@ -168,21 +156,36 @@ function formatGridAsTable(gridData, unfilledSlots, schedulePeriodStr, status) {
         }
     }
 
-    const sdRow = tbody.insertRow(); sdRow.className = 'sd-row';
-    const cellSDLabel = sdRow.insertCell(); cellSDLabel.textContent = 'SD'; cellSDLabel.className = 'employee-name-cell';
+    const sdRow = tbody.insertRow();
+    sdRow.className = 'sd-row';
+    const cellSDLabel = sdRow.insertCell();
+    cellSDLabel.textContent = 'SD';
+    cellSDLabel.className = 'employee-name-cell';
+
     const unfilledJobsAtSlot = {};
     (unfilledSlots || []).forEach(unfilled => {
         const slot = jsTimeToSlot(unfilled.time_slot);
         if (slot !== null) {
             if (!unfilledJobsAtSlot[slot]) unfilledJobsAtSlot[slot] = [];
-            if (!unfilledJobsAtSlot[slot].includes(unfilled.job_code)) { unfilledJobsAtSlot[slot].push(unfilled.job_code); }
+            if (!unfilledJobsAtSlot[slot].includes(unfilled.job_code)) {
+               unfilledJobsAtSlot[slot].push(unfilled.job_code);
+            }
         }
     });
     for (let i = 0; i < numSlots; i++) {
-        const cellSD = sdRow.insertCell(); const absSlot = startSlotAbs + i;
+        const cellSD = sdRow.insertCell();
+        const absSlot = startSlotAbs + i;
         if (unfilledJobsAtSlot[absSlot] && unfilledJobsAtSlot[absSlot].length > 0) {
-            unfilledJobsAtSlot[absSlot].sort(); cellSD.textContent = unfilledJobsAtSlot[absSlot].join(',');
-            cellSD.classList.add('task-unfilled'); cellSD.title = cellSD.textContent;
+            unfilledJobsAtSlot[absSlot].sort();
+            let sdText = unfilledJobsAtSlot[absSlot].join(',');
+            if (sdText.length > 4 && unfilledJobsAtSlot[absSlot].length > 1) { // Simple truncation
+                sdText = sdText.substring(0, 3) + '+';
+            } else if (sdText.length > 4) {
+                sdText = sdText.substring(0, 4);
+            }
+            cellSD.textContent = sdText;
+            cellSD.classList.add('task-unfilled');
+            cellSD.title = unfilledJobsAtSlot[absSlot].join(',');
         } else {
             cellSD.textContent = ''; cellSD.classList.add('task-empty');
         }
@@ -193,6 +196,7 @@ function formatGridAsTable(gridData, unfilledSlots, schedulePeriodStr, status) {
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log("DOM fully loaded and parsed");
+
     const kSelect = document.getElementById('k-employees');
     const scheduleStartSelect = document.getElementById('schedule-start');
     const scheduleEndSelect = document.getElementById('schedule-end');
@@ -220,7 +224,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const employeeStatsContainer = document.getElementById('employee-stats-container');
     const jobStatsContainer = document.getElementById('job-stats-container');
     const unfilledDetailsContainer = document.getElementById('unfilled-details-container');
+    const unfilledSection = document.getElementById('unfilled-section');
     const printScheduleButton = document.getElementById('print-schedule-button');
+    const screenshotScheduleButton = document.getElementById('screenshot-schedule-button');
     const contactLink = document.getElementById('contact-link');
     const contactModal = document.getElementById('contact-modal');
     const closeContactModalButton = document.getElementById('close-contact-modal');
@@ -231,12 +237,15 @@ document.addEventListener('DOMContentLoaded', () => {
     let allJobDefinitions = [];
     window.lastGeneratedReport = null;
     window.lastSchedulePeriod = null;
+    let scheduleTimer = null;
+    const MAX_SOLVE_TIME_SECONDS = 180;
 
     if (enableMandatoryBreakCheckbox) {
         toggleMandatoryBreakSettings();
         enableMandatoryBreakCheckbox.addEventListener('change', toggleMandatoryBreakSettings);
     }
     renderAllJobDefinitions();
+
     populateTimeSelectWithOptions('schedule-start', 0, 24, '09:00');
     populateTimeSelectWithOptions('schedule-end', 0, 48, '18:00');
     populateTimeSelectWithOptions('break-period-start', 0, 48, '12:00');
@@ -249,6 +258,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (clearJobsButton) clearJobsButton.addEventListener('click', handleClearJobs);
     if (generateScheduleButton) generateScheduleButton.addEventListener('click', handleGenerateSchedule);
     if (printScheduleButton) printScheduleButton.addEventListener('click', () => window.print());
+    if (screenshotScheduleButton) screenshotScheduleButton.addEventListener('click', handleScreenshotSchedule);
 
     if (contactLink && contactModal) {
         contactLink.addEventListener('click', (e) => {
@@ -287,9 +297,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         formStatusDiv.className = 'error';
                     }).catch(() => { formStatusDiv.textContent = '發送失敗，無法解析錯誤信息。'; formStatusDiv.className = 'error'; })
                 }
-            }).catch(error => {
-                formStatusDiv.textContent = '發送時發生網絡錯誤。'; formStatusDiv.className = 'error'; console.error('Form submission error:', error);
-            });
+            }).catch(error => { formStatusDiv.textContent = '發送時發生網絡錯誤。'; formStatusDiv.className = 'error'; console.error('Form submission error:', error); });
         });
     }
 
@@ -304,8 +312,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const startSlot = jsTimeToSlot(start); const endSlot = jsTimeToSlot(end);
         if (startSlot === null || endSlot === null || endSlot <= startSlot) { alert('崗位需求的結束時間必須晚於開始時間。'); return; }
         const timeRange = `${start}–${end}`;
-        if (!currentJobTimeRanges.includes(timeRange)) { currentJobTimeRanges.push(timeRange); currentJobTimeRanges.sort(); renderCurrentJobTimes();
-        } else { alert('該崗位時段已添加。'); }
+        if (!currentJobTimeRanges.includes(timeRange)) { currentJobTimeRanges.push(timeRange); currentJobTimeRanges.sort(); renderCurrentJobTimes(); }
+        else { alert('該崗位時段已添加。'); }
     }
     function renderCurrentJobTimes() {
         if (!currentJobTimesDiv) return; currentJobTimesDiv.innerHTML = '';
@@ -317,9 +325,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     function handleAddJobDefinition() {
-        if (!jobCodeInput) { alert('崗位代碼輸入框未找到。'); return; }
-        const code = jobCodeInput.value.trim().toUpperCase(); if (!code) { alert('請輸入崗位名稱/代碼。'); return; }
-        if (currentJobTimeRanges.length === 0) { alert('請至少為此崗位添加一個需求時段。'); return; }
+        if (!jobCodeInput) { alert('崗位代碼輸入框未找到。'); return; } const code = jobCodeInput.value.trim().toUpperCase();
+        if (!code) { alert('請輸入崗位名稱/代碼。'); return; } if (currentJobTimeRanges.length === 0) { alert('請至少為此崗位添加一個需求時段。'); return; }
         const existingJobIndex = allJobDefinitions.findIndex(job => job.code === code);
         if (existingJobIndex !== -1) {
             const existingTimes = allJobDefinitions[existingJobIndex].times; const newTimes = currentJobTimeRanges.filter(t => !existingTimes.includes(t));
@@ -330,20 +337,31 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     function handleClearJobs() { if (confirm('確定要清空所有已定義的崗位嗎？')) { allJobDefinitions = []; renderAllJobDefinitions(); } }
     function renderAllJobDefinitions() { if (!jobDefinitionsDisplay) return; jobDefinitionsDisplay.value = allJobDefinitions.map(job => `${job.code} ${job.times.join(',')}`).join('\n'); }
+
     async function handleGenerateSchedule() {
-        const k = parseInt(kSelect.value); const scheduleStart = scheduleStartSelect.value; const scheduleEnd = scheduleEndSelect.value;
-        const schedulePeriod = `${scheduleStart}–${scheduleEnd}`; window.lastSchedulePeriod = schedulePeriod;
-        const maxConsecutiveMinutes = parseInt(maxWorkMinutesSelect.value); const restDurationAfterWork = parseInt(restAfterWorkMinutesSelect.value);
-        const enableBreak = enableMandatoryBreakCheckbox.checked; let designatedBreakPeriod = ""; let minBreakMinutesVal = 0;
+        console.log("handleGenerateSchedule called");
+        if (scheduleTimer) { clearTimeout(scheduleTimer); scheduleTimer = null; }
+
+        const k = parseInt(kSelect.value);
+        const scheduleStart = scheduleStartSelect.value;
+        const scheduleEnd = scheduleEndSelect.value;
+        const schedulePeriod = `${scheduleStart}–${scheduleEnd}`;
+        window.lastSchedulePeriod = schedulePeriod;
+
+        const maxConsecutiveMinutes = parseInt(maxWorkMinutesSelect.value);
+        const restDurationAfterWork = parseInt(restAfterWorkMinutesSelect.value);
+        const enableBreak = enableMandatoryBreakCheckbox.checked;
+        let designatedBreakPeriod = ""; let minBreakMinutesVal = 0;
         if (enableBreak) {
             const breakStart = breakPeriodStartSelect.value; const breakEnd = breakPeriodEndSelect.value;
             designatedBreakPeriod = `${breakStart}–${breakEnd}`; minBreakMinutesVal = parseInt(minBreakMinutesSelect.value);
         }
         const jobDefinitionsText = jobDefinitionsDisplay.value;
         const jobRequirementsArray = jobDefinitionsText.split('\n').map(line => line.trim()).filter(line => line && line.includes(' '));
+
         if (isNaN(k) || k <= 0) { showError('員工人數必須是有效的正整數。'); return; }
-        const startSlotForValidation = jsTimeToSlot(scheduleStart); const endSlotForValidation = jsTimeToSlot(scheduleEnd);
-        if (startSlotForValidation === null || endSlotForValidation === null || endSlotForValidation <= startSlotForValidation) { showError('排班總時段的結束時間必須晚於開始時間。'); return; }
+        const startSlotVal = jsTimeToSlot(scheduleStart); const endSlotVal = jsTimeToSlot(scheduleEnd);
+        if (startSlotVal === null || endSlotVal === null || endSlotVal <= startSlotVal) { showError('排班總時段的結束時間必須晚於開始時間。'); return; }
         if (isNaN(maxConsecutiveMinutes) || maxConsecutiveMinutes <= 0) { showError('最大連續工作時間選擇無效。'); return; }
         if (isNaN(restDurationAfterWork) || (restDurationAfterWork !== 30 && restDurationAfterWork !== 60)) { showError('連續工作後的休息時間選擇無效。'); return; }
         if (enableBreak) {
@@ -352,21 +370,43 @@ document.addEventListener('DOMContentLoaded', () => {
             if (isNaN(minBreakMinutesVal) || minBreakMinutesVal <= 0) { showError('最小落場休息時間選擇無效。'); return; }
         }
         if (jobRequirementsArray.length === 0 && allJobDefinitions.length === 0) { showError('請至少定義一個有效的崗位需求。'); return; }
+
         const requestData = {
             k_employees: k, schedule_period: schedulePeriod, max_consecutive_work_minutes: maxConsecutiveMinutes,
             rest_duration_minutes_after_work: restDurationAfterWork, enable_mandatory_break: enableBreak,
             designated_global_break_period: designatedBreakPeriod, min_mandatory_break_minutes: minBreakMinutesVal,
             job_requirements: jobRequirementsArray
         };
-        if (loadingIndicator) loadingIndicator.style.display = 'block';
+
         if (errorMessageDiv) { errorMessageDiv.textContent = ''; errorMessageDiv.style.display = 'none'; }
         if (scheduleResultsSection) scheduleResultsSection.style.display = 'none';
         clearResultContainers();
+
+        let secondsElapsed = 0;
+        const timerDisplayInterval = setInterval(() => {
+            secondsElapsed++;
+            if (loadingIndicator) loadingIndicator.innerHTML = `正在計算排班 (${secondsElapsed}/${MAX_SOLVE_TIME_SECONDS}秒)...`;
+        }, 1000);
+        if (loadingIndicator) {
+            loadingIndicator.innerHTML = `正在計算排班 (0/${MAX_SOLVE_TIME_SECONDS}秒)...`;
+            loadingIndicator.style.display = 'block';
+        }
+
+        scheduleTimer = setTimeout(() => {
+            clearInterval(timerDisplayInterval);
+            if (loadingIndicator) loadingIndicator.style.display = 'none';
+            showError(`排班計算超時 (${MAX_SOLVE_TIME_SECONDS}秒)。請嘗試簡化需求或放寬約束條件後重試。`);
+        }, MAX_SOLVE_TIME_SECONDS * 1000);
+
         try {
             console.log("Sending payload to /schedule:", JSON.stringify(requestData, null, 2));
             const response = await fetch('/schedule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestData) });
-            const result = await response.json(); window.lastGeneratedReport = result.report;
+            clearTimeout(scheduleTimer); scheduleTimer = null; clearInterval(timerDisplayInterval);
             if (loadingIndicator) loadingIndicator.style.display = 'none';
+
+            const result = await response.json();
+            window.lastGeneratedReport = result.report;
+
             if (!response.ok) {
                 showError(`API 請求失敗 (${response.status}): ${result.error || response.statusText || '未知後端錯誤'}`);
                 if (result.report && scheduleResultsSection) { scheduleResultsSection.style.display = 'block'; displayReportOnly(result.report); }
@@ -375,14 +415,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 displayResults(result.solution_grid, result.report, schedulePeriod);
             }
         } catch (error) {
-            if (loadingIndicator) loadingIndicator.style.display = 'none'; showError(`網絡或腳本錯誤: ${error.message}`); console.error("Fetch error:", error);
+            clearTimeout(scheduleTimer); scheduleTimer = null; clearInterval(timerDisplayInterval);
+            if (loadingIndicator) loadingIndicator.style.display = 'none';
+            showError(`網絡或請求錯誤: ${error.message}。如果問題持續，請嘗試放寬約束條件。`);
+            console.error("Fetch error:", error);
         }
     }
+
     function clearResultContainers() {
-        if (resultStatusDiv) resultStatusDiv.textContent = ''; if (gridContainer) gridContainer.innerHTML = '';
-        if (employeeStatsContainer) employeeStatsContainer.innerHTML = ''; if (jobStatsContainer) jobStatsContainer.innerHTML = '';
+        if (resultStatusDiv) resultStatusDiv.textContent = '';
+        if (gridContainer) gridContainer.innerHTML = '';
+        if (employeeStatsContainer) employeeStatsContainer.innerHTML = '';
+        if (jobStatsContainer) jobStatsContainer.innerHTML = '';
         if (unfilledDetailsContainer) unfilledDetailsContainer.innerHTML = '';
+        if (unfilledSection) unfilledSection.style.display = 'none';
     }
+
     function displayResults(solutionGrid, report, schedulePeriodStr) {
          const status = report.status || "未知";
          if (resultStatusDiv) {
@@ -391,29 +439,61 @@ document.addEventListener('DOMContentLoaded', () => {
             else if (status.includes("INFEASIBLE")) resultStatusDiv.classList.add('infeasible');
          }
          const isSuccess = status === "OPTIMAL" || status === "FEASIBLE";
-         const gridHtml = formatGridAsTable(solutionGrid, report.unfilled_job_slots || [], schedulePeriodStr, status); // Use new function
+         const gridHtml = formatGridAsTable(solutionGrid, report.unfilled_job_slots || [], schedulePeriodStr, status);
          if (gridContainer) gridContainer.innerHTML = gridHtml;
+
          if (report.employee_stats && report.employee_stats.length > 0 && employeeStatsContainer) {
              employeeStatsContainer.innerHTML = generateHtmlTable( report.employee_stats.filter(s => s), ["employee", "W_count", "R_count"], {"employee": "員工", "W_count": "工作格數", "R_count": "休息格數"} );
          } else if (employeeStatsContainer) { employeeStatsContainer.innerHTML = "<p>無員工統計數據。</p>"; }
+
          if (jobStatsContainer) displayJobStats(report);
-         if (report.unfilled_job_slots && report.unfilled_job_slots.length > 0 && unfilledDetailsContainer) {
-              unfilledDetailsContainer.innerHTML = generateHtmlTable( report.unfilled_job_slots, ["job_code", "time_slot", "reason"], {"job_code": "崗位代碼", "time_slot": "時段", "reason": "原因/狀態"} );
-         } else if (isSuccess && unfilledDetailsContainer) { unfilledDetailsContainer.innerHTML = "<p>所有崗位需求均已成功編配。</p>";
-         } else if (unfilledDetailsContainer) { unfilledDetailsContainer.innerHTML = "<p>無詳細未填補崗位信息。</p>"; }
+
+         if (unfilledDetailsContainer && unfilledSection) {
+            if (report.unfilled_job_slots && report.unfilled_job_slots.length > 0) {
+                const sortedUnfilledSlots = [...report.unfilled_job_slots].sort((a, b) => {
+                    const slotA = jsTimeToSlot(a.time_slot); const slotB = jsTimeToSlot(b.time_slot);
+                    if (slotA === null && slotB === null) return 0; if (slotA === null) return 1; if (slotB === null) return -1;
+                    if (slotA === slotB) return a.job_code.localeCompare(b.job_code);
+                    return slotA - slotB;
+                });
+                unfilledDetailsContainer.innerHTML = generateHtmlTable( sortedUnfilledSlots, ["time_slot", "job_code"], {"time_slot": "時段", "job_code": "崗位代碼"} );
+                unfilledSection.style.display = 'block';
+            } else if (isSuccess) {
+                 unfilledDetailsContainer.innerHTML = "<p>所有崗位需求均已成功編配。</p>";
+                 unfilledSection.style.display = 'block';
+            } else {
+                 unfilledDetailsContainer.innerHTML = "<p>無詳細未填補崗位信息。</p>";
+                 unfilledSection.style.display = 'block';
+            }
+         }
          if (!isSuccess && report.infeasible_reason && errorMessageDiv) { showError(report.infeasible_reason); }
     }
+
     function displayReportOnly(report) {
          if (scheduleResultsSection) scheduleResultsSection.style.display = 'block';
          const status = report.status || "API錯誤/報告不完整";
          if (resultStatusDiv) { resultStatusDiv.textContent = `狀態: ${status}`; resultStatusDiv.className = ''; if (status.includes("INFEASIBLE")) resultStatusDiv.classList.add('infeasible'); }
          if (gridContainer) gridContainer.innerHTML = "<p>無排班網格數據。</p>";
          if (jobStatsContainer) displayJobStats(report);
-         if (report.unfilled_job_slots && report.unfilled_job_slots.length > 0 && unfilledDetailsContainer) {
-             unfilledDetailsContainer.innerHTML = generateHtmlTable( report.unfilled_job_slots, ["job_code", "time_slot", "reason"], {"job_code": "崗位代碼", "time_slot": "時段", "reason": "原因/狀態"} );
-         } else if (unfilledDetailsContainer) { unfilledDetailsContainer.innerHTML = "<p>無詳細未填補崗位信息。</p>"; }
+
+         if (unfilledDetailsContainer && unfilledSection) {
+            if (report.unfilled_job_slots && report.unfilled_job_slots.length > 0) {
+                const sortedUnfilledSlots = [...report.unfilled_job_slots].sort((a, b) => {
+                    const slotA = jsTimeToSlot(a.time_slot); const slotB = jsTimeToSlot(b.time_slot);
+                    if (slotA === null && slotB === null) return 0; if (slotA === null) return 1; if (slotB === null) return -1;
+                    if (slotA === slotB) return a.job_code.localeCompare(b.job_code);
+                    return slotA - slotB;
+                });
+                unfilledDetailsContainer.innerHTML = generateHtmlTable( sortedUnfilledSlots, ["time_slot", "job_code"], {"time_slot": "時段", "job_code": "崗位代碼"} );
+                unfilledSection.style.display = 'block';
+            } else {
+                unfilledDetailsContainer.innerHTML = "<p>無詳細未填補崗位信息。</p>";
+                unfilledSection.style.display = 'block';
+            }
+         }
           if (report.infeasible_reason && errorMessageDiv) { showError(`報告附帶信息: ${report.infeasible_reason}`); }
     }
+
     function displayJobStats(report) {
         if (!jobStatsContainer) return;
         if (report.job_assignments_count) {
@@ -428,5 +508,29 @@ document.addEventListener('DOMContentLoaded', () => {
               else { jobStatsContainer.innerHTML = "<p>無崗位指派數據。</p>"; }
          } else { jobStatsContainer.innerHTML = "<p>無崗位指派數據。</p>"; }
     }
+
+    function handleScreenshotSchedule() {
+       const gridToCapture = document.getElementById('schedule-grid-container');
+       const printButton = document.getElementById('print-schedule-button');
+       const screenshotButtonItself = document.getElementById('screenshot-schedule-button');
+       if (!gridToCapture || gridToCapture.innerHTML.trim() === "") { alert("沒有排班網格可以截圖，請先生成排班。"); return; }
+       const elementsToHideTemporarily = [printButton, screenshotButtonItself];
+       elementsToHideTemporarily.forEach(el => { if (el) el.style.visibility = 'hidden'; });
+       let gridBackgroundColor = getComputedStyle(gridToCapture).backgroundColor;
+       if (gridBackgroundColor === 'rgba(0, 0, 0, 0)' || gridBackgroundColor === 'transparent') {
+           gridBackgroundColor = getComputedStyle(document.body).backgroundColor;
+       }
+       html2canvas(gridToCapture, {
+           allowTaint: true, useCORS: true, backgroundColor: gridBackgroundColor,
+           scale: window.devicePixelRatio || 2, logging: false,
+       }).then(canvas => {
+           const link = document.createElement("a"); link.download = "排班網格.png";
+           link.href = canvas.toDataURL("image/png"); link.click();
+       }).catch(err => {
+           console.error("截圖失敗:", err); alert("抱歉，截圖失敗。");
+       }).finally(() => {
+           elementsToHideTemporarily.forEach(el => { if (el) el.style.visibility = 'visible'; });
+       });
+   }
 
 }); // End of DOMContentLoaded

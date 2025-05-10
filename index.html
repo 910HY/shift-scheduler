@@ -3,133 +3,84 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>嗨！編位啦。智能編更系統</title>
-    <link rel="stylesheet" href="/static/style.css"> <!-- 確保路徑正確 -->
-    <!-- 如果你需要 Font Awesome 或其他圖標庫，在這裡引入 -->
-    <!-- <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css"> -->
+    <!-- SEO Meta Tags -->
+    <title>嗨！編位啦。免費智能編更系統｜一站式排班工具｜免下載免登入</title>
+    <meta name="description" content="即用即排！支援即日編更、自動支援人員安排，特別適合政府部門、保安、活動、物管等多班次行業使用。" />
+    <meta name="keywords" content="排班系統, 編更工具, 自動排班, 免費輪班系統, 政府編更, 即日排班, 智能排班, SD支援" />
+    <meta property="og:title" content="AI智能編位排班系統" />
+    <meta property="og:description" content="免下載、免註冊、即用即排！免費支援各行各業的智能編更平台。" />
+    <!-- End SEO Meta Tags -->
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
 <body>
-    <h1>嗨！編位啦。智能編更系統</h1>
+    <h1>嗨！編位啦。免費智能編更系統</h1>
 
+    <!-- Global Settings Card -->
     <div class="config-card" id="global-settings-card">
-        <h2 class="card-title">
-            <span class="card-icon-placeholder">⚙️</span>
-            全局設置
-        </h2>
+        <h2 class="card-title"><span class="card-icon-placeholder">⚙️</span>全局設置</h2>
         <div>
             <label for="k-employees">設置員工數量:</label>
             <select id="k-employees">
-                <option value="1">1 名員工</option>
-                <option value="2">2 名員工</option>
-                <option value="3" selected>3 名員工</option>
-                <option value="4">4 名員工</option>
-                <option value="5">5 名員工</option>
-                <option value="6">6 名員工</option>
-                <option value="7">7 名員工</option>
-                <option value="8">8 名員工</option>
-                <option value="9">9 名員工</option>
-                <option value="10">10 名員工</option>
-                <option value="11">11 名員工</option>
-                <option value="12">12 名員工</option>
-                <option value="13">13 名員工</option>
-                <option value="14">14 名員工</option>
-                <option value="15">15 名員工</option>
+                <option value="1">1 名員工</option><option value="2">2 名員工</option><option value="3" selected>3 名員工</option><option value="4">4 名員工</option><option value="5">5 名員工</option><option value="6">6 名員工</option><option value="7">7 名員工</option><option value="8">8 名員工</option><option value="9">9 名員工</option><option value="10">10 名員工</option><option value="11">11 名員工</option><option value="12">12 名員工</option><option value="13">13 名員工</option><option value="14">14 名員工</option><option value="15">15 名員工</option>
             </select>
         </div>
-        <div>
-            <label for="schedule-start">預設排班時段 開始:</label>
-            <select id="schedule-start"></select> <!-- JS 會填充選項 -->
-        </div>
-        <div>
-            <label for="schedule-end">預設排班時段 結束:(跨日請用 24+ 表示結束時間，例如 04:00 寫作 28:00)</label>
-            <select id="schedule-end"></select>   <!-- JS 會填充選項 -->
-        </div>
+        <div><label for="schedule-start">預設排班時段 開始:</label><select id="schedule-start"></select></div>
+        <div><label for="schedule-end">預設排班時段 結束 (跨天時結束小時需 >= 24):</label><select id="schedule-end"></select></div>
     </div>
 
+    <!-- Constraints Card -->
     <div class="config-card" id="constraints-card">
-        <h2 class="card-title">
-            <span class="card-icon-placeholder">⚙️</span>
-            排班約束條件
-        </h2>
+        <h2 class="card-title"><span class="card-icon-placeholder">⚙️</span>排班約束條件</h2>
         <div>
             <label for="max-work-minutes">最大連續工作時間 (分鐘):</label>
             <select id="max-work-minutes">
-                <option value="60">60 分鐘 (1小時)</option>
-                <option value="90" selected>90 分鐘 (1.5小時)</option>
-                <option value="120">120 分鐘 (2小時)</option>
-                <option value="150">150 分鐘 (2.5小時)</option>
-                <option value="180">180 分鐘 (3小時)</option>
-                <option value="210">210 分鐘 (3.5小時)</option>
-                <option value="240">240 分鐘 (4小時)</option>
+                <option value="60">60 分鐘 (1小時)</option><option value="90" selected>90 分鐘 (1.5小時)</option><option value="120">120 分鐘 (2小時)</option><option value="150">150 分鐘 (2.5小時)</option><option value="180">180 分鐘 (3小時)</option><option value="210">210 分鐘 (3.5小時)</option><option value="240">240 分鐘 (4小時)</option>
             </select>
         </div>
         <div>
             <label for="rest-after-work-minutes">連續工作達到上限後的休息時間:</label>
-            <select id="rest-after-work-minutes">
-                <option value="30" selected>30 分鐘</option>
-                <option value="60">60 分鐘</option>
-            </select>
+            <select id="rest-after-work-minutes"><option value="30" selected>30 分鐘</option><option value="60">60 分鐘</option></select>
         </div>
     </div>
 
+    <!-- Mandatory Break Card -->
     <div class="config-card" id="mandatory-break-card">
-        <h2 class="card-title">
-            <span class="card-icon-placeholder">⏱️</span>
-            員工必須落場規定
-        </h2>
+        <h2 class="card-title"><span class="card-icon-placeholder">⏱️</span>員工必須落場規定</h2>
         <div>
             <input type="checkbox" id="enable-mandatory-break" style="width: auto; margin-right: 5px;">
             <label for="enable-mandatory-break" style="display: inline; font-weight: normal;">啟用強制落場規定</label>
         </div>
         <div id="mandatory-break-settings" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--border-color);">
-            <div>
-                <label for="break-period-start">全局落場時段 開始:</label>
-                <select id="break-period-start"></select> <!-- JS 會填充選項 -->
-            </div>
-            <div>
-                <label for="break-period-end">全局落場時段 結束 (跨天時結束小時需 >= 24):</label>
-                <select id="break-period-end"></select>   <!-- JS 會填充選項 -->
-            </div>
+            <div><label for="break-period-start">全局落場時段 開始:</label><select id="break-period-start"></select></div>
+            <div><label for="break-period-end">全局落場時段 結束 (跨天時結束小時需 >= 24):</label><select id="break-period-end"></select></div>
             <div>
                 <label for="min-break-minutes">最小落場休息時間 (分鐘):</label>
                 <select id="min-break-minutes">
-                    <option value="30">30 分鐘</option>
-                    <option value="60" selected>60 分鐘 (1小時)</option>
-                    <option value="90">90 分鐘 (1.5小時)</option>
-                    <option value="120">120 分鐘 (2小時)</option>
-                    <option value="150">150 分鐘 (2.5小時)</option>
-                    <option value="180">180 分鐘 (3小時)</option>
+                    <option value="30">30 分鐘</option><option value="60" selected>60 分鐘 (1小時)</option><option value="90">90 分鐘 (1.5小時)</option><option value="120">120 分鐘 (2小時)</option><option value="150">150 分鐘 (2.5小時)</option><option value="180">180 分鐘 (3小時)</option>
                 </select>
             </div>
         </div>
     </div>
 
+    <!-- Job Definition Card -->
     <div class="config-card" id="job-definition-card">
-        <h2 class="card-title">
-             <span class="card-icon-placeholder">➕</span>
-            新增/管理崗位
-        </h2>
-        <div>
-            <label for="job-code">崗位名稱/代碼:</label>
-            <input type="text" id="job-code" placeholder="例如: A2, D13">
-        </div>
+        <h2 class="card-title"><span class="card-icon-placeholder">➕</span>新增/管理崗位</h2>
+        <div><label for="job-code">崗位名稱/代碼:</label><input type="text" id="job-code" placeholder="例如: A1, 收銀"></div>
         <div>
             <label>需求時段 (可添加多個):</label>
             <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                <select id="job-time-start" style="flex-grow: 1;"></select> <!-- JS 會填充選項 -->
+                <select id="job-time-start" style="flex-grow: 1;"></select>
                 <span style="padding: 0 5px;">–</span>
-                <select id="job-time-end" style="flex-grow: 1;"></select>   <!-- JS 會填充選項 -->
+                <select id="job-time-end" style="flex-grow: 1;"></select>
                 <button type="button" id="add-job-time-button" class="secondary" style="flex-shrink: 0;">添加此時段</button>
             </div>
             <label>當前崗位已添加時段:</label>
-            <div id="current-job-times" class="chip-container">
-                <!-- JS 會在這裡填充 "chip" -->
-            </div>
+            <div id="current-job-times" class="chip-container"></div>
         </div>
-        <button type="button" id="add-job-definition-button" style="margin-top:10px;">確認並新增此崗位</button>
-
+        <button type="button" id="add-job-definition-button" style="margin-top:10px;">確認並新增此崗位定義</button>
         <div style="margin-top: 20px;">
-            <label for="job-definitions-display">目前已新增崗位 (每行一個 '代碼 時段1,時段2,...'):</label>
+            <label for="job-definitions-display">目前已定義崗位 (每行一個 '代碼 時段1,時段2,...'):</label>
             <textarea id="job-definitions-display" rows="5" placeholder="例如:
 A1 09:00–12:00,14:00–17:00
 B2 22:00–26:00"></textarea>
@@ -137,84 +88,88 @@ B2 22:00–26:00"></textarea>
         </div>
     </div>
 
-    <div id="controls-area" style="text-align: center; margin-bottom: 20px;">
+    <!-- Controls Area -->
+    <div id="controls-area" style="text-align: center; margin-bottom: 20px;" class="print-hide">
         <button type="button" id="generate-schedule-button">生成排班</button>
     </div>
 
-    <div id="loading-indicator" style="display: none;">
-        <!-- style.css 會處理樣式 -->
-        正在計算排班，請稍候...
-    </div>
-    <div id="error-message" style="display: none;">
-        <!-- JS 會填充錯誤信息, style.css 處理樣式 -->
-    </div>
+    <!-- Loading and Error Messages -->
+    <div id="loading-indicator" style="display: none;" class="print-hide">正在計算排班，請稍候...</div>
+    <div id="error-message" style="display: none;" class="print-hide"></div>
 
+    <!-- Schedule Results Card -->
     <div id="schedule-results" class="config-card" style="display: none;">
         <h2 class="card-title">
-             <span class="card-icon-placeholder">📊</span>
-            排班結果
+            <span class="card-icon-placeholder">📊</span>排班結果
             <button id="print-schedule-button" class="secondary print-hide" style="float: right; font-size: 0.8em; padding: 5px 10px; margin-top: -5px;">列印</button>
+            <button id="screenshot-schedule-button" class="secondary print-hide" style="float: right; font-size: 0.8em; padding: 5px 10px; margin-top: -5px; margin-right: 5px;">下載截圖</button>
         </h2>
-        <div id="result-status"></div> <!-- style.css 會處理樣式 -->
+        <div id="result-status"></div>
         <h3>排班網格</h3>
         <div id="schedule-grid-container"></div>
+
+        <!-- ****** "詳細未填補崗位列表" 的新位置和標題 ****** -->
+        <div id="unfilled-section" style="display: none;">
+            <h3>以下崗位未能安排員工，請考慮調整或提供支援:</h3>
+            <div id="unfilled-details-container"></div>
+        </div>
+        <!-- ****** 結束修改 ****** -->
+
         <h3>各員工統計</h3>
         <div id="employee-stats-container"></div>
         <h3>各崗位指派情況</h3>
         <div id="job-stats-container"></div>
-        <h3>詳細未填補崗位列表</h3>
-        <div id="unfilled-details-container"></div>
     </div>
 
-    <!-- ****** Footer ****** -->
+    <!-- Features and FAQ Section (New) -->
+    <div class="config-card print-hide">
+       <section id="features">
+           <h2 class="card-title"><span class="card-icon-placeholder">🌟</span>系統功能一覽</h2>
+           <ul>
+               <li>一鍵自動編更，支援即日或跨日工作</li>
+               <li>可設定崗位需求，系統自動分配</li>
+               <li>最長工作時數，強制落場設定，休息排程</li>
+               <li>免登入、免費使用、可即時輸出結果</li>
+           </ul>
+       </section>
+    </div>
+    <div class="config-card print-hide">
+       <section id="faq">
+           <h2 class="card-title"><span class="card-icon-placeholder">❓</span>常見問題 Q & A</h2>
+           <h4>Q1：系統需要登入或收費嗎？</h4>
+           <p>A1：完全免費，無需帳號。</p>
+           <h4>Q2：這套排班系統可以應用在哪些情境？</h4>
+           <p>A2：當然可以！無論你係政府部門、醫療機構
+            <h4>Q2：這套排班系統可以應用在哪些情境搞展覽、晚會、義工活動、甚至街站值班，只要唔同時間有唔同崗位需求，輸入好就得。
+            系統會幫你自動編好人手，唔使你慢慢手排，特別啱即日臨時安排、編更、唔同員工唔同崗位嘅情況使用。</p>
+           <h4>Q3：排班沒有結果或計算時間過長？</h4>
+           <p>A3：請嘗試放寬約束條件，例如增加員工人數、調整最大連續工作時數、修改落場規定，或簡化崗位需求。如果問題持續，您可以通過下方的聯絡方式回報問題。</p>
+       </section>
+    </div>
+    <!-- End Features and FAQ -->
+
+    <!-- Footer -->
     <footer class="print-hide">
-        <p>
-            如有任何報錯或排班要求，請<a href="#" id="contact-link">點擊這裡與我聯絡</a>。
-        </p>
-        <p>© 2025 嗨！編位啦。智能編更系統</p>
+        <p>如有任何報錯或排班要求，請<a href="#" id="contact-link">點擊這裡與我聯絡</a>。</p>
+        <p>© 嗨！編位啦。免費智能編更系統 </p>
     </footer>
-    <!-- ****** End Footer ****** -->
 
-
-    <!-- ****** 聯繫表單模態框 ****** -->
+    <!-- Contact Form Modal -->
     <div id="contact-modal" class="modal-overlay print-hide" style="display: none;">
         <div class="modal-content">
             <span class="close-modal-button" id="close-contact-modal">×</span>
             <h3>聯絡開發者</h3>
-            <!-- 
-                重要: 將下面的 action URL 替換成你自己的 Formspree 端點!
-                例如: https://formspree.io/f/abcdefgh 
-            -->
             <form id="contact-form" action="https://formspree.io/f/meoaprzb" method="POST">
-                <div>
-                    <label for="contact-name">你的名字 (選填):</label>
-                    <input type="text" id="contact-name" name="name">
-                </div>
-                <div>
-                    <label for="contact-email">你的電郵 (方便回覆):</label>
-                    <input type="email" id="contact-email" name="_replyto" required>
-                </div>
-                <div>
-                    <label for="contact-subject">主題 (選填):</label>
-                    <input type="text" id="contact-subject" name="_subject" value="排班系統反饋"> <!-- 預設主題 -->
-                </div>
-                <div>
-                    <label for="contact-message">訊息內容:</label>
-                    <textarea id="contact-message" name="message" rows="6" required></textarea>
-                </div>
-                <!-- 可選: 自定義感謝頁面 -->
-                <!-- <input type="hidden" name="_next" value="https://你的網站.com/thank-you.html"> -->
-                
-                <div style="text-align: right; margin-top: 20px;">
-                    <button type="submit">發送訊息</button>
-                </div>
+                <div><label for="contact-name">你的名字 (選填):</label><input type="text" id="contact-name" name="name"></div>
+                <div><label for="contact-email">你的電郵 (方便回覆):</label><input type="email" id="contact-email" name="_replyto" required></div>
+                <div><label for="contact-subject">主題 (選填):</label><input type="text" id="contact-subject" name="_subject" value="排班系統反饋"></div>
+                <div><label for="contact-message">訊息內容:</label><textarea id="contact-message" name="message" rows="6" required></textarea></div>
+                <div style="text-align: right; margin-top: 20px;"><button type="submit">發送訊息</button></div>
             </form>
-            <div id="form-status" style="margin-top: 15px;"></div> <!-- 用於顯示提交狀態 -->
+            <div id="form-status" style="margin-top: 15px;"></div>
         </div>
     </div>
-    <!-- ****** End 聯繫表單模態框 ****** -->
 
-
-    <script src="/static/script.js"></script> <!-- 確保路徑正確 -->
+    <script src="/static/script.js"></script>
 </body>
 </html>

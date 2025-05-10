@@ -1,0 +1,9 @@
+正確的流程是：
+打開項目文件夾 (例如在 VS Code 中)。
+打開終端 (例如 VS Code 的集成終端)。
+激活虛擬環境：
+Windows (PowerShell): .\.venv\Scripts\Activate.ps1
+Windows (cmd): .\.venv\Scripts\activate.bat
+macOS/Linux: source .venv/bin/activate
+(將 .venv 替換成你虛擬環境文件夾的實際名稱)。
+激活成功後，你就可以直接運行你的 Python 腳本了 (例如 python main.py)，它會自動使用虛擬環境中已安裝的包。

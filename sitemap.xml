@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://shift-scheduler-9ct4.onrender.com/</loc> <!-- 將 "你的域名.com" 替換成你的實際域名 -->
+    <lastmod>2025-05-10</lastmod> <!-- (可選) 上次修改日期，格式 YYYY-MM-DD -->
+    <changefreq>monthly</changefreq> <!-- (可選) 頁面更改頻率: always, hourly, daily, weekly, monthly, yearly, never -->
+    <priority>1.0</priority> <!-- (可選) 相對重要性 (0.0 到 1.0)，首頁通常是 1.0 -->
+  </url>
+  <!-- 如果未來有其他重要頁面，例如 /about, /faq (作為獨立頁面而不是錨點)，可以在這裡添加更多的 <url> 塊 -->
+  <!-- 
+  <url>
+    <loc>https://shift-scheduler-9ct4.onrender.com/</loc>
+    <lastmod>2025-05-01</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.5</priority>
+  </url>
+   -->
+</urlset>
