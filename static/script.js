@@ -238,7 +238,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.lastGeneratedReport = null;
     window.lastSchedulePeriod = null;
     let scheduleTimer = null;
-    const MAX_SOLVE_TIME_SECONDS = 180;
+    const MAX_SOLVE_TIME_SECONDS = 120;
 
     if (enableMandatoryBreakCheckbox) {
         toggleMandatoryBreakSettings();

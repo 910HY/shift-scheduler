@@ -278,7 +278,7 @@ class ShiftSchedulerWithConstraints:
 
         # --- 求解 ---
         solver = cp_model.CpSolver() # (同前)
-        solver.parameters.max_time_in_seconds = 180.0
+        solver.parameters.max_time_in_seconds = 115.0
         status = solver.Solve(model)
 
         # --- 報告生成 ---
