@@ -10,6 +10,21 @@
     <meta property="og:title" content="AI智能編位排班系統" />
     <meta property="og:description" content="免下載、免註冊、即用即排！免費支援各行各業的智能編更平台。" />
     <!-- End SEO Meta Tags -->
+
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+    <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+
+    <!-- 不同尺寸的 PNG (可選, 提高在不同設備上的顯示質量) -->
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicon-16x16.png') }}"> <!-- 如果你有16x16的 -->
+
+    <!-- Apple Touch Icon (iOS 主屏幕圖標) -->
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+
+    <!-- (可選) Android Chrome 主題顏色 -->
+    <!-- <meta name="theme-color" content="#1A2124"> --> 
+    <!-- ****** End Favicon 鏈接 ****** -->
+
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
