@@ -49,8 +49,21 @@ function weekdayZh(date) {
 function formatLongDate(date) {
     return `${date.getMonth() + 1}月${date.getDate()}日${weekdayZh(date)}`;
 }
+const MAX_BULK_STAFF = 80;
+const STAFF_COLORS = ["#2f6fed", "#1b9e4b", "#e67e22", "#e84a7f", "#5856d6", "#32ade6", "#af52de", "#d97706"];
+
+function isNumericName(name) {
+    return /^\d+$/.test(String(name).trim());
+}
 function staffInitial(name) {
-    return name.replace(/^阿/, "").slice(0, 1) || name.slice(0, 1);
+    const t = String(name).trim();
+    if (isNumericName(t)) return t;
+    return t.replace(/^阿/, "").slice(0, 1) || t.slice(0, 1);
+}
+function staffColorFor(indexOrNumber) {
+    const n = Number(indexOrNumber);
+    const idx = Number.isFinite(n) && n > 0 ? n - 1 : indexOrNumber;
+    return STAFF_COLORS[Math.abs(idx) % STAFF_COLORS.length];
 }
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 
@@ -197,6 +210,84 @@ const App = {
         return out;
     },
     staffById(id) { return this.state.staff.find((s) => s.id === id); },
+    sortedStaff() {
+        return [...this.state.staff].sort((a, b) => {
+            const an = isNumericName(a.name);
+            const bn = isNumericName(b.name);
+            if (an && bn) return Number(a.name) - Number(b.name);
+            if (an !== bn) return an ? -1 : 1;
+            return a.name.localeCompare(b.name, "zh-Hant");
+        });
+    },
+    addStaffNamed(name, { silent = false } = {}) {
+        const trimmed = String(name || "").trim();
+        if (!trimmed) {
+            if (!silent) this.toast("輸入個名或編號先");
+            return false;
+        }
+        if (this.state.staff.some((s) => s.name === trimmed)) {
+            if (!silent) this.toast("已經有呢位");
+            return false;
+        }
+        const num = isNumericName(trimmed) ? Number(trimmed) : this.state.staff.length + 1;
+        this.state.staff.push({
+            id: isNumericName(trimmed) ? `n${trimmed}` : `s${Date.now()}-${trimmed}`,
+            name: trimmed,
+            color: staffColorFor(num),
+        });
+        return true;
+    },
+    bulkAddStaff(fromRaw, toRaw) {
+        const from = Number.parseInt(String(fromRaw).trim(), 10);
+        const to = Number.parseInt(String(toRaw).trim(), 10);
+        if (!Number.isInteger(from) || !Number.isInteger(to)) {
+            this.toast("由／至要填整數");
+            return;
+        }
+        const lo = Math.min(from, to);
+        const hi = Math.max(from, to);
+        if (lo < 1) {
+            this.toast("編號由 1 開始");
+            return;
+        }
+        if (hi - lo + 1 > MAX_BULK_STAFF) {
+            this.toast(`一次最多加 ${MAX_BULK_STAFF} 人`);
+            return;
+        }
+        let added = 0;
+        let skipped = 0;
+        for (let n = lo; n <= hi; n += 1) {
+            if (this.addStaffNamed(String(n), { silent: true })) added += 1;
+            else skipped += 1;
+        }
+        this.render();
+        if (added === 0) this.toast(`${lo}–${hi} 已經全部有咗`);
+        else this.toast(skipped ? `已加入 ${added} 人，跳過 ${skipped} 個已有編號` : `已加入 ${added} 人（${lo}–${hi}）`);
+    },
+    removeStaff(id) {
+        const person = this.staffById(id);
+        if (!person) return;
+        Object.keys(this.state.cells).forEach((key) => {
+            if (this.state.cells[key]?.staffId === id) {
+                this.state.cells[key] = { staffId: null, confirmed: false };
+            }
+        });
+        delete this.state.unavailable[id];
+        this.state.staff = this.state.staff.filter((s) => s.id !== id);
+        this.render();
+        this.toast(`已刪 ${person.name}`);
+    },
+    clearStaff() {
+        if (!this.state.staff.length) return this.toast("名單已經空");
+        if (!window.confirm(`清空全部 ${this.state.staff.length} 位人手？編更入面嘅指派都會變空缺。`)) return;
+        this.state.staff = [];
+        this.state.unavailable = {};
+        Object.keys(this.state.cells).forEach((key) => {
+            this.state.cells[key] = { staffId: null, confirmed: false };
+        });
+        this.render();
+        this.toast("已清空人手");
+    },
     jobById(id) { return this.state.jobs.find((j) => j.id === id); },
     jobByCode(code) { return this.state.jobs.find((j) => j.code === code); },
     categoryById(id) { return this.state.categories.find((c) => c.id === id); },
@@ -393,6 +484,7 @@ const App = {
                     block.staffId ? "is-assigned" : "is-gap",
                     locked ? "is-locked" : "",
                     block.confirmed ? "is-confirmed" : "",
+                    staff && isNumericName(staff.name) ? "is-num" : "",
                 ].filter(Boolean).join(" ");
                 const style = block.staffId
                     ? `left:${left}%;width:${w}%;background:${job.tint};color:${job.accent}`
@@ -510,10 +602,11 @@ const App = {
         this.closeOverlay("sheet");
         this.ui.picker = block;
         const current = this.cell(block.jobId, block.start)?.staffId;
-        const rows = this.state.staff.map((s) => {
+        const rows = this.sortedStaff().map((s) => {
             const gone = this.state.unavailable[s.id] !== undefined && this.state.unavailable[s.id] <= block.start;
             const label = gone ? `${s.name}（已走咗）` : s.name;
-            return `<button type="button" class="sheet-btn" data-staff="${s.id}" ${s.id === current || gone ? "disabled" : ""}>${label}</button>`;
+            const numClass = isNumericName(s.name) ? " is-num" : "";
+            return `<button type="button" class="sheet-btn${numClass}" data-staff="${s.id}" ${s.id === current || gone ? "disabled" : ""}>${label}</button>`;
         }).join("");
         $("picker-actions").innerHTML = `${rows}<button type="button" class="sheet-btn is-cancel" data-staff="">取消</button>`;
         $("picker-actions").onclick = (e) => {
@@ -652,7 +745,7 @@ const App = {
             c.classList.toggle("is-on", c.dataset.filter === this.ui.staffFilter);
         });
         const { workTargetMinutes, restTargetMinutes, maxConsecutiveWorkMinutes } = this.state.constraints;
-        const cards = this.state.staff.map((s) => {
+        const cards = this.sortedStaff().map((s) => {
             const mins = this.staffMinutes(s.id);
             const status = this.staffStatus(s.id);
             if (this.ui.staffFilter === "on" && !status.on) return "";
@@ -665,10 +758,11 @@ const App = {
                     : "";
             const workPct = clamp((mins.work / workTargetMinutes) * 100, 0, 100);
             const restPct = clamp((mins.rest / restTargetMinutes) * 100, 0, 100);
+            const numClass = isNumericName(s.name) ? " is-num" : "";
             return `<article class="staff-card">
                 <div class="staff-top">
-                    <span class="avatar" style="background:${s.color}">${staffInitial(s.name)}</span>
-                    <div class="staff-name">${s.name}</div>
+                    <span class="avatar${numClass}" style="background:${s.color}">${staffInitial(s.name)}</span>
+                    <div class="staff-name${numClass}">${s.name}</div>
                     <div class="staff-status"><span class="dot ${status.on ? "" : "is-off"}"></span>${status.label}</div>
                 </div>
                 <div class="meter"><span>工作</span><div class="bar is-work"><span style="width:${workPct}%"></span></div><span class="meter-val">${mins.work}／${workTargetMinutes} 分鐘</span></div>
@@ -889,10 +983,26 @@ const App = {
                 </div>
             </div>
             <div class="more-card">
-                <h3>人手名單</h3>
-                ${this.state.staff.map((s) => `<div class="staff-mini"><span class="avatar" style="background:${s.color}">${staffInitial(s.name)}</span>${s.name}</div>`).join("")}
-                <div class="field"><label>加同事（少少字）</label><input id="more-new-name" maxlength="8" placeholder="例如：阿樂"></div>
+                <h3>人手名單（${this.state.staff.length}）</h3>
+                <p class="hint">批量加入用純編號，例如由 1 至 20。已有嘅編號會跳過，示範人名會留低。</p>
+                <div class="bulk-row">
+                    <div class="field"><label for="more-bulk-from">由</label><input id="more-bulk-from" type="number" min="1" max="99" value="1"></div>
+                    <div class="field"><label for="more-bulk-to">至</label><input id="more-bulk-to" type="number" min="1" max="99" value="20"></div>
+                </div>
+                <button type="button" class="btn-primary" id="more-bulk-add">批量加入</button>
+                <div id="staff-mini-list" class="staff-mini-list">
+                ${this.sortedStaff().map((s) => {
+                    const numClass = isNumericName(s.name) ? " is-num" : "";
+                    return `<div class="staff-mini">
+                        <span class="avatar${numClass}" style="background:${s.color}">${staffInitial(s.name)}</span>
+                        <span class="staff-mini-name${numClass}">${s.name}</span>
+                        <button type="button" class="staff-del" data-del="${s.id}" aria-label="刪 ${s.name}">刪</button>
+                    </div>`;
+                }).join("")}
+                </div>
+                <div class="field"><label>加一位（名或編號）</label><input id="more-new-name" maxlength="8" placeholder="例如：21 或 阿樂"></div>
                 <button type="button" class="btn-secondary" id="more-add">新增同事</button>
+                <button type="button" class="btn-danger" id="more-clear-staff" style="margin-top:8px;">清空人手</button>
             </div>
             <div class="more-card">
                 <button type="button" class="btn-secondary" id="more-reset">重設示範數據</button>
@@ -913,12 +1023,14 @@ const App = {
         bindVal("more-wt", (v) => { this.state.constraints.workTargetMinutes = Number(v); });
         bindVal("more-rt", (v) => { this.state.constraints.restTargetMinutes = Number(v); });
         $("more-add").addEventListener("click", () => {
-            const name = $("more-new-name").value.trim();
-            if (!name) return this.toast("輸入個名先");
-            if (this.state.staff.some((s) => s.name === name)) return this.toast("已經有呢位");
-            const colors = ["#5856d6", "#32ade6", "#af52de", "#64d2ff"];
-            this.state.staff.push({ id: `s${Date.now()}`, name, color: colors[this.state.staff.length % colors.length] });
-            this.render();
+            if (this.addStaffNamed($("more-new-name").value)) this.render();
+        });
+        $("more-bulk-add").addEventListener("click", () => {
+            this.bulkAddStaff($("more-bulk-from").value, $("more-bulk-to").value);
+        });
+        $("more-clear-staff").addEventListener("click", () => this.clearStaff());
+        $("more-root").querySelectorAll("[data-del]").forEach((btn) => {
+            btn.addEventListener("click", () => this.removeStaff(btn.dataset.del));
         });
         $("more-reset").addEventListener("click", () => {
             this.state = seedAssignments(createDemoState());
