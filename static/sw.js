@@ -1,5 +1,5 @@
-const CACHE = "shift-mobile-v6";
-const PRECACHE = ["/", "/static/app.css", "/static/app.js", "/static/favicon.png", "/manifest.webmanifest"];
+const CACHE = "shift-mobile-v7";
+const PRECACHE = ["/", "/static/favicon.png", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(PRECACHE)).then(() => self.skipWaiting()));
@@ -14,6 +14,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.pathname === "/schedule") return;
+  if (url.pathname.startsWith("/static/app.")) return;
   event.respondWith(
     fetch(event.request)
       .then((res) => {

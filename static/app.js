@@ -194,6 +194,7 @@ const App = {
         });
         $("btn-calendar").addEventListener("click", () => this.toast("MVP 而家只編今日"));
         $("today-now-chip").addEventListener("click", () => this.openNowSheet());
+        $("today-now-to-start").addEventListener("click", () => this.snapDemoNowToStart());
         $("btn-staff-filter").addEventListener("click", () => {
             $("staff-filter-bar").hidden = !$("staff-filter-bar").hidden;
         });
@@ -479,6 +480,13 @@ const App = {
         if (preview) preview.textContent = `今日會顯示：${this.nowLabel()}`;
         this.renderLockBanner("today-lock-banner");
         this.renderLockBanner("resolve-lock-banner");
+        const startBtn = $("today-now-to-start");
+        if (startBtn) {
+            const show = this.state.nowMode === "demo"
+                && timeToSlot(this.state.nowOverride) > this.startAbs();
+            startBtn.hidden = !show;
+            startBtn.textContent = `將而家設為開始時間（${this.state.scheduleStart}）`;
+        }
     },
 
     setDemoNow(timeStr, { silent = false } = {}) {
@@ -1124,7 +1132,7 @@ const App = {
                 const existing = this.cell(job.id, abs);
                 if (!asDraft) {
                     if (this.isConfirmed(job.id, abs)) return;
-                    if (this.isPast(abs)) return;
+                    if (this.isPast(abs) && existing?.staffId) return;
                 }
                 const found = byCell.get(`${abs}:${job.code}`) || null;
                 const staff = this.state.staff.find((s) => String(s.name) === String(found));
