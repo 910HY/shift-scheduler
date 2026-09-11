@@ -13,7 +13,7 @@
     --warn-bg: #fff6e8;
     --warn-text: #b45309;
     --tabbar-h: 56px;
-    --label-w: 92px;
+    --label-w: 108px;
     --slot-w: 86px;
     --row-h: 72px;
     --safe-b: env(safe-area-inset-bottom, 0px);
@@ -144,7 +144,12 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
     color: #fff; font-size: 9px; font-weight: 800;
 }
 .tl-row { border-bottom: 1px solid #f1f1f4; }
-.tl-row:nth-child(even) .tl-track { background: #fafafa; }
+.tl-group { border-bottom: 2px solid #ececf0; }
+.tl-group-head .tl-label { background: #f7f7fa; min-height: 52px; }
+.tl-group-head .tl-track { height: 52px; background: #f7f7fa; }
+.tl-row.is-track { --row-h: 64px; }
+.tl-row.is-track .tl-label { padding-left: 14px; }
+.tl-row.is-track .tl-job-top { font-size: 13px; }
 
 .block {
     position: absolute;
@@ -302,6 +307,52 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
 }
 .staff-mini { display: flex; align-items: center; gap: 10px; min-height: 48px; }
 .more-link { color: var(--blue); text-decoration: none; display: block; min-height: 44px; line-height: 44px; }
+.job-edit {
+    padding: 12px 0;
+    border-top: 1px solid #f1f1f4;
+}
+.job-edit:first-of-type { border-top: 0; }
+.job-edit-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.job-edit-sub { width: 100%; color: var(--muted); font-size: 12px; }
+.stepper-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 48px;
+    margin-bottom: 8px;
+}
+.stepper { display: flex; align-items: center; gap: 8px; }
+.step-btn {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: #eef0f3; font-size: 22px; font-weight: 600;
+}
+.step-btn:disabled { opacity: 0.35; }
+.step-val { min-width: 24px; text-align: center; font-size: 20px; }
+.field-label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 6px; }
+.range-row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr 48px;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+.range-row select {
+    min-height: 44px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 0 8px;
+    background: #fafafa;
+    width: 100%;
+}
+.range-del {
+    min-height: 44px;
+    border-radius: 12px;
+    background: #fff1f0;
+    color: var(--red);
+    font-weight: 650;
+}
+.range-del:disabled { opacity: 0.35; }
+.range-add { margin-top: 4px; }
 
 .overlay { position: fixed; inset: 0; z-index: 40; }
 .overlay[hidden] { display: none !important; }

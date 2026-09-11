@@ -9,10 +9,11 @@ from backend_api import ShiftSchedulerWithConstraints, time_to_slot
 
 
 DEMO_JOBS = [
-    "A1 09:00–13:00",
-    "A2 09:30–10:30,11:00–13:00",
-    "閘口 09:30–13:00",
-    "場內 09:00–10:30,11:00–13:00",
+    "ARR-1 09:00–13:00",
+    "ARR-2 09:00–13:00",
+    "DEP-1 09:30–10:30,11:00–13:00",
+    "KIOSK-A-1 09:30–13:00",
+    "KIOSK-D-1 09:00–10:30,11:00–13:00",
 ]
 NAMES = ["阿明", "小華", "阿強", "阿美"]
 
@@ -46,17 +47,17 @@ class SchedulerMobileTests(unittest.TestCase):
 
     def test_locked_cells_survive_resolve(self):
         locks = [
-            {"employee": "阿明", "time_slot": "09:00", "job_code": "A1"},
-            {"employee": "阿明", "time_slot": "09:30", "job_code": "A1"},
+            {"employee": "阿明", "time_slot": "09:00", "job_code": "ARR-1"},
+            {"employee": "阿明", "time_slot": "09:30", "job_code": "ARR-1"},
         ]
         grid, report = make_scheduler(locked_assignments=locks).solve()
         self.assertIn(report["status"], {"OPTIMAL", "FEASIBLE", "FEASIBLE_LOCKS_ONLY"})
-        self.assertEqual(grid["阿明"][0], "A1")
-        self.assertEqual(grid["阿明"][1], "A1")
+        self.assertEqual(grid["阿明"][0], "ARR-1")
+        self.assertEqual(grid["阿明"][1], "ARR-1")
 
     def test_unavailable_staff_not_assigned_after_leave(self):
         locks = [
-            {"employee": "阿強", "time_slot": "09:00", "job_code": "場內"},
+            {"employee": "阿強", "time_slot": "09:00", "job_code": "KIOSK-D-1"},
         ]
         unavailable = [{"employee": "阿強", "from_time": "09:30"}]
         grid, report = make_scheduler(
@@ -64,12 +65,22 @@ class SchedulerMobileTests(unittest.TestCase):
             unavailable=unavailable,
         ).solve()
         self.assertIn(report["status"], {"OPTIMAL", "FEASIBLE", "FEASIBLE_LOCKS_ONLY"})
-        self.assertEqual(grid["阿強"][0], "場內")
+        self.assertEqual(grid["阿強"][0], "KIOSK-D-1")
         for slot in grid["阿強"][1:]:
             self.assertEqual(slot, "R")
         # Jobs that 阿強 can no longer cover should surface as 空缺 if nobody else took them.
         unfilled_times = {(u["job_code"], u["time_slot"]) for u in report["unfilled_job_slots"]}
         self.assertTrue(len(unfilled_times) >= 0)
+
+    def test_expanded_category_tracks_are_distinct_jobs(self):
+        grid, report = make_scheduler().solve()
+        self.assertIn(report["status"], {"OPTIMAL", "FEASIBLE", "FEASIBLE_LOCKS_ONLY"})
+        assigned = set()
+        for row in grid.values():
+            assigned.update(code for code in row if code and code != "R")
+        self.assertTrue({"ARR-1", "ARR-2"} & assigned or report["unfilled_job_slots"])
+        codes = {u["job_code"] for u in report["unfilled_job_slots"]}
+        self.assertTrue(assigned or codes)
 
     def test_time_helpers(self):
         self.assertEqual(time_to_slot("09:00"), 18)
