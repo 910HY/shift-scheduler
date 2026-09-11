@@ -1,5 +1,37 @@
-const STORAGE_KEY = "shift-mobile-v1";
+const STORAGE_KEY = "shift-mobile-v2";
 const SLOT_MIN = 30;
+const MIN_TRACKS = 1;
+const MAX_TRACKS = 6;
+
+const CATEGORY_DEFS = [
+    { id: "arr", solverCode: "ARR", name: "ARR", short: "到", tint: "#e8f1ff", accent: "#2f6fed" },
+    { id: "dep", solverCode: "DEP", name: "DEP", short: "離", tint: "#e7f8ee", accent: "#1b9e4b" },
+    { id: "kiosk_a", solverCode: "KIOSK-A", name: "KIOSK (A)", short: "KA", tint: "#f3e8ff", accent: "#7c3aed" },
+    { id: "kiosk_d", solverCode: "KIOSK-D", name: "KIOSK (D)", short: "KD", tint: "#fff6e5", accent: "#d97706" },
+];
+
+function trackId(categoryId, n) {
+    return `${categoryId}:${n}`;
+}
+
+function expandJobs(categories) {
+    return (categories || []).flatMap((cat) =>
+        Array.from({ length: cat.count }, (_, i) => {
+            const n = i + 1;
+            return {
+                id: trackId(cat.id, n),
+                categoryId: cat.id,
+                track: n,
+                code: `${cat.solverCode}-${n}`,
+                name: `${cat.name}-${n}`,
+                ranges: cat.ranges,
+                tint: cat.tint,
+                accent: cat.accent,
+                demand: cat.count,
+            };
+        })
+    );
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -23,8 +55,14 @@ function staffInitial(name) {
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 
 function createDemoState() {
+    const categories = [
+        { ...CATEGORY_DEFS[0], count: 2, ranges: [{ start: "09:00", end: "13:00" }] },
+        { ...CATEGORY_DEFS[1], count: 2, ranges: [{ start: "09:30", end: "10:30" }, { start: "11:00", end: "13:00" }] },
+        { ...CATEGORY_DEFS[2], count: 2, ranges: [{ start: "09:30", end: "13:00" }] },
+        { ...CATEGORY_DEFS[3], count: 2, ranges: [{ start: "09:00", end: "10:30" }, { start: "11:00", end: "13:00" }] },
+    ];
     return {
-        version: 1,
+        version: 2,
         scheduleStart: "09:00",
         scheduleEnd: "13:00",
         nowMode: "demo",
@@ -35,12 +73,8 @@ function createDemoState() {
             { id: "keung", name: "阿強", color: "#e67e22" },
             { id: "mei", name: "阿美", color: "#e84a7f" },
         ],
-        jobs: [
-            { id: "a1", code: "A1", name: "A1", demand: 2, tint: "#e8f1ff", accent: "#2f6fed", ranges: [{ start: "09:00", end: "13:00" }] },
-            { id: "a2", code: "A2", name: "A2", demand: 2, tint: "#e7f8ee", accent: "#1b9e4b", ranges: [{ start: "09:30", end: "10:30" }, { start: "11:00", end: "13:00" }] },
-            { id: "gate", code: "閘口", name: "閘口", demand: 3, tint: "#f3e8ff", accent: "#7c3aed", ranges: [{ start: "09:30", end: "13:00" }] },
-            { id: "floor", code: "場內", name: "場內", demand: 2, tint: "#fff6e5", accent: "#d97706", ranges: [{ start: "09:00", end: "10:30" }, { start: "11:00", end: "13:00" }] },
-        ],
+        categories,
+        jobs: expandJobs(categories),
         cells: {},
         unavailable: {},
         constraints: {
@@ -65,15 +99,15 @@ function seedAssignments(state) {
             state.cells[cellKey(jobId, s)] = { staffId, confirmed };
         }
     };
-    put("a1", "09:00", "10:00", "ming", true);
-    put("a1", "11:00", "12:00", "wah");
-    put("a1", "12:00", "13:00", "ming");
-    put("a2", "09:30", "10:30", "keung");
-    put("a2", "12:00", "13:00", "keung");
-    put("gate", "09:30", "10:30", "wah");
-    put("gate", "11:00", "12:00", "ming");
-    put("floor", "09:00", "09:30", "keung");
-    put("floor", "11:00", "12:00", "mei");
+    put("arr:1", "09:00", "10:00", "ming", true);
+    put("arr:1", "11:00", "12:00", "wah");
+    put("arr:1", "12:00", "13:00", "ming");
+    put("dep:1", "09:30", "10:30", "keung");
+    put("dep:1", "12:00", "13:00", "keung");
+    put("kiosk_a:1", "09:30", "10:30", "wah");
+    put("kiosk_a:1", "11:00", "12:00", "ming");
+    put("kiosk_d:1", "09:00", "09:30", "keung");
+    put("kiosk_d:1", "11:00", "12:00", "mei");
     return state;
 }
 
@@ -94,6 +128,7 @@ const App = {
 
     init() {
         this.state = this.load() || seedAssignments(createDemoState());
+        this.syncJobs();
         this.bind();
         this.render();
         if ("serviceWorker" in navigator) {
@@ -106,7 +141,7 @@ const App = {
             const raw = localStorage.getItem(STORAGE_KEY);
             if (!raw) return null;
             const data = JSON.parse(raw);
-            if (!data || data.version !== 1 || !data.staff || !data.jobs) return null;
+            if (!data || data.version !== 2 || !data.staff || !data.categories) return null;
             return data;
         } catch {
             return null;
@@ -164,6 +199,84 @@ const App = {
     staffById(id) { return this.state.staff.find((s) => s.id === id); },
     jobById(id) { return this.state.jobs.find((j) => j.id === id); },
     jobByCode(code) { return this.state.jobs.find((j) => j.code === code); },
+    categoryById(id) { return this.state.categories.find((c) => c.id === id); },
+
+    syncJobs() {
+        this.state.jobs = expandJobs(this.state.categories);
+    },
+
+    trackHasLockedCells(jobId) {
+        return this.absSlots().some((abs) => {
+            const cell = this.cell(jobId, abs);
+            return Boolean(cell?.staffId) && this.isLocked(jobId, abs);
+        });
+    },
+
+    pruneTrackCells(jobId) {
+        Object.keys(this.state.cells).forEach((key) => {
+            if (key.startsWith(`${jobId}:`)) delete this.state.cells[key];
+        });
+    },
+
+    setCategoryCount(categoryId, nextCount) {
+        const cat = this.categoryById(categoryId);
+        if (!cat) return;
+        const wanted = clamp(Number(nextCount), MIN_TRACKS, MAX_TRACKS);
+        if (wanted === cat.count) return;
+        if (wanted > cat.count) {
+            cat.count = wanted;
+            this.syncJobs();
+            this.render();
+            this.toast(`${cat.name} 而家 ${cat.count} 個崗`);
+            return;
+        }
+        while (cat.count > wanted) {
+            const id = trackId(cat.id, cat.count);
+            if (this.trackHasLockedCells(id)) {
+                this.toast(`${cat.name}-${cat.count} 有已確認／已過時段，減唔到`);
+                break;
+            }
+            this.pruneTrackCells(id);
+            cat.count -= 1;
+        }
+        this.syncJobs();
+        this.render();
+        if (cat.count === wanted) this.toast(`${cat.name} 而家 ${cat.count} 個崗`);
+    },
+
+    addCategoryRange(categoryId) {
+        const cat = this.categoryById(categoryId);
+        if (!cat) return;
+        const last = cat.ranges[cat.ranges.length - 1];
+        const start = last ? last.end : this.state.scheduleStart;
+        const end = this.state.scheduleEnd;
+        if (timeToSlot(start) >= timeToSlot(end)) {
+            return this.toast("冇多餘時段可以再加");
+        }
+        cat.ranges.push({ start, end });
+        this.syncJobs();
+        this.render();
+    },
+
+    removeCategoryRange(categoryId, index) {
+        const cat = this.categoryById(categoryId);
+        if (!cat || cat.ranges.length <= 1) return this.toast("至少留一段需求時段");
+        cat.ranges.splice(index, 1);
+        this.syncJobs();
+        this.render();
+    },
+
+    updateCategoryRange(categoryId, index, field, value) {
+        const cat = this.categoryById(categoryId);
+        if (!cat || !cat.ranges[index]) return;
+        const next = { ...cat.ranges[index], [field]: value };
+        if (timeToSlot(next.start) >= timeToSlot(next.end)) {
+            return this.toast("結束時間要遲過開始");
+        }
+        cat.ranges[index] = next;
+        this.syncJobs();
+        this.render();
+    },
 
     nowDate() {
         if (this.state.nowMode === "demo" && this.state.nowOverride) {
@@ -266,7 +379,10 @@ const App = {
         const nowPct = ((nowMin - startMin) / (count * SLOT_MIN)) * 100;
         const times = this.absSlots().map((abs) => `<span class="tl-time">${slotToTime(abs)}</span>`).join("");
 
-        const rows = this.state.jobs.map((job) => {
+        const nowLine = (nowPct >= 0 && nowPct <= 100)
+            ? `<div class="now-line" style="left:${nowPct}%"></div>`
+            : "";
+        const renderTrack = (job, compact) => {
             const blocks = this.blocksForJob(job).map((block) => {
                 const left = ((block.start - start) / count) * 100;
                 const w = ((block.end - block.start) / count) * 100;
@@ -286,18 +402,29 @@ const App = {
                     : `<span class="gap-ico">👤</span><span>空缺</span>`;
                 return `<button type="button" class="${cls}" style="${style}" data-job="${job.id}" data-start="${block.start}" data-end="${block.end}">${label}</button>`;
             }).join("");
-            const nowLine = (nowPct >= 0 && nowPct <= 100)
-                ? `<div class="now-line" style="left:${nowPct}%"></div>`
-                : "";
-            return `<div class="tl-row">
+            const title = compact ? `${job.track}` : job.name;
+            return `<div class="tl-row${compact ? " is-track" : ""}">
                 <div class="tl-label">
                     <div class="tl-job-top">
-                        <span class="job-badge" style="background:${job.accent}">${job.code.slice(0, 2)}</span>${job.name}
+                        <span class="job-badge" style="background:${job.accent}">${compact ? job.track : job.categoryId === "arr" ? "到" : job.name.slice(0, 2)}</span>${title}
                     </div>
-                    <div class="tl-job-sub">崗位需求：${job.demand}</div>
+                    ${compact ? "" : `<div class="tl-job-sub">崗位需求：${job.demand}</div>`}
                 </div>
                 <div class="tl-track" style="width:${width}px">${nowLine}${blocks}</div>
             </div>`;
+        };
+        const rows = this.state.categories.map((cat) => {
+            const tracks = this.state.jobs.filter((j) => j.categoryId === cat.id);
+            const head = `<div class="tl-row tl-group-head">
+                <div class="tl-label">
+                    <div class="tl-job-top">
+                        <span class="job-badge" style="background:${cat.accent}">${cat.short}</span>${cat.name}
+                    </div>
+                    <div class="tl-job-sub">崗位需求：${cat.count}</div>
+                </div>
+                <div class="tl-track" style="width:${width}px">${nowLine}</div>
+            </div>`;
+            return `<div class="tl-group">${head}${tracks.map((job) => renderTrack(job, true)).join("")}</div>`;
         }).join("");
 
         $("timeline-root").innerHTML = `<div class="tl-scroll"><div class="tl">
@@ -697,7 +824,38 @@ const App = {
         const times = [];
         for (let s = 0; s < 48; s += 1) times.push(slotToTime(s));
         const opt = (list, selected) => list.map((v) => `<option value="${v}" ${String(v) === String(selected) ? "selected" : ""}>${v}</option>`).join("");
+        const rangeEditor = (cat) => cat.ranges.map((r, idx) => `
+            <div class="range-row">
+                <select data-cat="${cat.id}" data-idx="${idx}" data-field="start">${opt(times, r.start)}</select>
+                <span>–</span>
+                <select data-cat="${cat.id}" data-idx="${idx}" data-field="end">${opt(times, r.end)}</select>
+                <button type="button" class="range-del" data-cat="${cat.id}" data-idx="${idx}" ${cat.ranges.length <= 1 ? "disabled" : ""}>刪</button>
+            </div>`).join("");
+        const jobCards = this.state.categories.map((cat) => `
+            <div class="job-edit">
+                <div class="job-edit-top">
+                    <span class="job-badge" style="background:${cat.accent}">${cat.short}</span>
+                    <strong>${cat.name}</strong>
+                    <span class="job-edit-sub">會展開成 ${Array.from({ length: cat.count }, (_, i) => `${cat.solverCode}-${i + 1}`).join("、")}</span>
+                </div>
+                <div class="stepper-row">
+                    <span>崗位數</span>
+                    <div class="stepper">
+                        <button type="button" class="step-btn" data-cat="${cat.id}" data-delta="-1" ${cat.count <= MIN_TRACKS ? "disabled" : ""}>−</button>
+                        <strong class="step-val">${cat.count}</strong>
+                        <button type="button" class="step-btn" data-cat="${cat.id}" data-delta="1" ${cat.count >= MAX_TRACKS ? "disabled" : ""}>+</button>
+                    </div>
+                </div>
+                <label class="field-label">需求時段</label>
+                ${rangeEditor(cat)}
+                <button type="button" class="btn-secondary range-add" data-cat="${cat.id}">加時段</button>
+            </div>`).join("");
         $("more-root").innerHTML = `
+            <div class="more-card">
+                <h3>崗位要求</h3>
+                <p class="hint">得呢四類：ARR、DEP、KIOSK (A)、KIOSK (D)。改崗位數會加／減軌道（例如 ARR-1、ARR-2），每軌道每格仍然只派一人。已確認／已過時段唔會因為減崗洗走。</p>
+                ${jobCards}
+            </div>
             <div class="more-card">
                 <h3>而家幾點</h3>
                 <div class="field"><label>時間來源</label>
@@ -766,6 +924,24 @@ const App = {
             this.state = seedAssignments(createDemoState());
             this.render();
             this.toast("已重設示範編更");
+        });
+        $("more-root").querySelectorAll(".step-btn").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const cat = this.categoryById(btn.dataset.cat);
+                if (!cat) return;
+                this.setCategoryCount(cat.id, cat.count + Number(btn.dataset.delta));
+            });
+        });
+        $("more-root").querySelectorAll(".range-add").forEach((btn) => {
+            btn.addEventListener("click", () => this.addCategoryRange(btn.dataset.cat));
+        });
+        $("more-root").querySelectorAll(".range-del").forEach((btn) => {
+            btn.addEventListener("click", () => this.removeCategoryRange(btn.dataset.cat, Number(btn.dataset.idx)));
+        });
+        $("more-root").querySelectorAll(".range-row select").forEach((sel) => {
+            sel.addEventListener("change", () => {
+                this.updateCategoryRange(sel.dataset.cat, Number(sel.dataset.idx), sel.dataset.field, sel.value);
+            });
         });
     },
 };
