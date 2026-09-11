@@ -13,7 +13,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <link rel="apple-touch-icon" href="/static/favicon.png">
-    <link rel="stylesheet" href="/static/app.css">
+    <link rel="stylesheet" href="/static/app.css?v=7">
 </head>
 <body>
     <div id="app">
@@ -30,7 +30,9 @@
                     </svg>
                 </button>
             </header>
-            <div id="today-now-chip" class="now-chip" hidden></div>
+            <button type="button" id="today-now-chip" class="now-chip" hidden aria-label="改示範時間"></button>
+            <button type="button" id="today-now-to-start" class="now-start-btn" hidden>將而家設為開始時間</button>
+            <div id="today-lock-banner" class="lock-banner" hidden></div>
             <div id="timeline-root" class="timeline-root"></div>
         </section>
 
@@ -61,7 +63,8 @@
                 <h1 class="header-center">重算</h1>
             </header>
             <div class="resolve-body">
-                <p class="resolve-lead">每一次重算都會呼叫後端 OR-Tools CP-SAT。已過時段同已確認格會鎖住，只填未來／未鎖定空缺。</p>
+                <p id="resolve-lead" class="resolve-lead">每一次重算都會呼叫後端 OR-Tools CP-SAT。已過時段同已確認格會鎖住，只填未來／未鎖定空缺。</p>
+                <div id="resolve-lock-banner" class="lock-banner" hidden></div>
                 <button type="button" id="btn-resolve" class="btn-primary btn-xl">
                     <span class="btn-ico" aria-hidden="true">↻</span>重算未鎖定時段
                 </button>
@@ -137,6 +140,6 @@
     </div>
 
     <div id="toast" class="toast" hidden></div>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=7"></script>
 </body>
 </html>

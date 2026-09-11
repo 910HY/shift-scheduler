@@ -1,7 +1,9 @@
-const STORAGE_KEY = "shift-mobile-v2";
+const STORAGE_KEY = "shift-mobile-v4";
+const PREV_STORAGE_KEYS = ["shift-mobile-v3", "shift-mobile-v2"];
 const SLOT_MIN = 30;
 const MIN_TRACKS = 1;
 const MAX_TRACKS = 6;
+const MAX_STAFF_NUMBER = 99;
 
 const CATEGORY_DEFS = [
     { id: "arr", solverCode: "ARR", name: "ARR", short: "到", tint: "#e8f1ff", accent: "#2f6fed" },
@@ -43,13 +45,17 @@ function timeToSlot(timeStr) {
 function slotToTime(slot) {
     return `${pad(Math.floor(slot / 2))}:${pad((slot % 2) * 30)}`;
 }
+function normalizeClock(timeStr) {
+    const [h, m] = String(timeStr || "").split(":").map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return "06:30";
+    return `${pad(Math.min(23, Math.max(0, h)))}:${pad(Math.min(59, Math.max(0, m)))}`;
+}
 function weekdayZh(date) {
     return ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"][date.getDay()];
 }
 function formatLongDate(date) {
     return `${date.getMonth() + 1}月${date.getDate()}日${weekdayZh(date)}`;
 }
-const MAX_BULK_STAFF = 80;
 const STAFF_COLORS = ["#2f6fed", "#1b9e4b", "#e67e22", "#e84a7f", "#5856d6", "#32ade6", "#af52de", "#d97706"];
 
 function isNumericName(name) {
@@ -75,17 +81,15 @@ function createDemoState() {
         { ...CATEGORY_DEFS[3], count: 2, ranges: [{ start: "09:00", end: "10:30" }, { start: "11:00", end: "13:00" }] },
     ];
     return {
-        version: 2,
+        version: 4,
         scheduleStart: "09:00",
         scheduleEnd: "13:00",
         nowMode: "demo",
         nowOverride: "09:45",
-        staff: [
-            { id: "ming", name: "阿明", color: "#2f6fed" },
-            { id: "wah", name: "小華", color: "#1b9e4b" },
-            { id: "keung", name: "阿強", color: "#e67e22" },
-            { id: "mei", name: "阿美", color: "#e84a7f" },
-        ],
+        staff: Array.from({ length: 8 }, (_, i) => {
+            const n = i + 1;
+            return { id: `n${n}`, name: String(n), color: staffColorFor(n) };
+        }),
         categories,
         jobs: expandJobs(categories),
         cells: {},
@@ -112,15 +116,15 @@ function seedAssignments(state) {
             state.cells[cellKey(jobId, s)] = { staffId, confirmed };
         }
     };
-    put("arr:1", "09:00", "10:00", "ming", true);
-    put("arr:1", "11:00", "12:00", "wah");
-    put("arr:1", "12:00", "13:00", "ming");
-    put("dep:1", "09:30", "10:30", "keung");
-    put("dep:1", "12:00", "13:00", "keung");
-    put("kiosk_a:1", "09:30", "10:30", "wah");
-    put("kiosk_a:1", "11:00", "12:00", "ming");
-    put("kiosk_d:1", "09:00", "09:30", "keung");
-    put("kiosk_d:1", "11:00", "12:00", "mei");
+    put("arr:1", "09:00", "10:00", "n1", true);
+    put("arr:1", "11:00", "12:00", "n2");
+    put("arr:1", "12:00", "13:00", "n1");
+    put("dep:1", "09:30", "10:30", "n3");
+    put("dep:1", "12:00", "13:00", "n3");
+    put("kiosk_a:1", "09:30", "10:30", "n2");
+    put("kiosk_a:1", "11:00", "12:00", "n1");
+    put("kiosk_d:1", "09:00", "09:30", "n3");
+    put("kiosk_d:1", "11:00", "12:00", "n4");
     return state;
 }
 
@@ -142,23 +146,42 @@ const App = {
     init() {
         this.state = this.load() || seedAssignments(createDemoState());
         this.syncJobs();
+        if (this.clampDemoNow({ snapIfOutside: true, snapIfAllPast: true })) {
+            this.toast(`示範而家已設為開始時間 ${this.state.nowOverride}`);
+        }
         this.bind();
         this.render();
         if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register("/sw.js").catch(() => {});
+            navigator.serviceWorker.register("/sw.js").then((reg) => reg.update()).catch(() => {});
         }
     },
 
     load() {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            if (!raw) return null;
-            const data = JSON.parse(raw);
-            if (!data || data.version !== 2 || !data.staff || !data.categories) return null;
-            return data;
-        } catch {
-            return null;
+        const keys = [STORAGE_KEY, ...PREV_STORAGE_KEYS];
+        for (const key of keys) {
+            try {
+                const raw = localStorage.getItem(key);
+                if (!raw) continue;
+                const data = JSON.parse(raw);
+                if (!data || !data.staff || !data.categories) continue;
+                if (data.version !== 3 && data.version !== 4) continue;
+                data.version = 4;
+                if (data.nowMode !== "live") {
+                    const nowSlot = timeToSlot(data.nowOverride || data.scheduleStart || "09:00");
+                    const startSlot = timeToSlot(data.scheduleStart || "09:00");
+                    const endSlot = timeToSlot(data.scheduleEnd || "13:00");
+                    if (nowSlot < startSlot || nowSlot >= endSlot) {
+                        data.nowOverride = data.scheduleStart;
+                    } else if (String(data.nowOverride) === "09:45" && startSlot < timeToSlot("09:00")) {
+                        data.nowOverride = data.scheduleStart;
+                    }
+                }
+                return data;
+            } catch {
+                /* try next key */
+            }
         }
+        return null;
     },
 
     save() {
@@ -170,6 +193,8 @@ const App = {
             btn.addEventListener("click", () => this.setTab(btn.dataset.tab));
         });
         $("btn-calendar").addEventListener("click", () => this.toast("MVP 而家只編今日"));
+        $("today-now-chip").addEventListener("click", () => this.openNowSheet());
+        $("today-now-to-start").addEventListener("click", () => this.snapDemoNowToStart());
         $("btn-staff-filter").addEventListener("click", () => {
             $("staff-filter-bar").hidden = !$("staff-filter-bar").hidden;
         });
@@ -237,6 +262,19 @@ const App = {
         });
         return true;
     },
+    purgeNamedStaff() {
+        const named = this.state.staff.filter((s) => !isNumericName(s.name));
+        if (!named.length) return 0;
+        const ids = new Set(named.map((s) => s.id));
+        Object.keys(this.state.cells).forEach((key) => {
+            if (ids.has(this.state.cells[key]?.staffId)) {
+                this.state.cells[key] = { staffId: null, confirmed: false };
+            }
+        });
+        named.forEach((s) => { delete this.state.unavailable[s.id]; });
+        this.state.staff = this.state.staff.filter((s) => !ids.has(s.id));
+        return named.length;
+    },
     bulkAddStaff(fromRaw, toRaw) {
         const from = Number.parseInt(String(fromRaw).trim(), 10);
         const to = Number.parseInt(String(toRaw).trim(), 10);
@@ -244,25 +282,27 @@ const App = {
             this.toast("由／至要填整數");
             return;
         }
-        const lo = Math.min(from, to);
-        const hi = Math.max(from, to);
-        if (lo < 1) {
-            this.toast("編號由 1 開始");
+        if (from < 1 || to > MAX_STAFF_NUMBER) {
+            this.toast(`編號必須係 1–${MAX_STAFF_NUMBER}`);
             return;
         }
-        if (hi - lo + 1 > MAX_BULK_STAFF) {
-            this.toast(`一次最多加 ${MAX_BULK_STAFF} 人`);
+        if (from > to) {
+            this.toast("「由」不能大於「至」");
             return;
         }
+        const purged = this.purgeNamedStaff();
         let added = 0;
         let skipped = 0;
-        for (let n = lo; n <= hi; n += 1) {
+        for (let n = from; n <= to; n += 1) {
             if (this.addStaffNamed(String(n), { silent: true })) added += 1;
             else skipped += 1;
         }
         this.render();
-        if (added === 0) this.toast(`${lo}–${hi} 已經全部有咗`);
-        else this.toast(skipped ? `已加入 ${added} 人，跳過 ${skipped} 個已有編號` : `已加入 ${added} 人（${lo}–${hi}）`);
+        const bits = [];
+        if (purged) bits.push(`已清 ${purged} 個舊名`);
+        if (added) bits.push(`加入 ${added} 人（${from}–${to}）`);
+        if (skipped) bits.push(`已有編號跳過 ${skipped} 個`);
+        this.toast(bits.join("，") || `${from}–${to} 已經全部有咗`);
     },
     removeStaff(id) {
         const person = this.staffById(id);
@@ -346,6 +386,8 @@ const App = {
         }
         cat.ranges.push({ start, end });
         this.syncJobs();
+        this.ensureScheduleCoversRanges();
+        this.clampDemoNow({ snapIfAllPast: true });
         this.render();
     },
 
@@ -354,6 +396,7 @@ const App = {
         if (!cat || cat.ranges.length <= 1) return this.toast("至少留一段需求時段");
         cat.ranges.splice(index, 1);
         this.syncJobs();
+        this.clampDemoNow({ snapIfAllPast: true });
         this.render();
     },
 
@@ -366,7 +409,157 @@ const App = {
         }
         cat.ranges[index] = next;
         this.syncJobs();
+        this.ensureScheduleCoversRanges();
+        this.clampDemoNow({ snapIfAllPast: true });
         this.render();
+    },
+
+    ensureScheduleCoversRanges() {
+        const prevStart = this.state.scheduleStart;
+        let minS = this.startAbs();
+        let maxE = this.endAbs();
+        this.state.categories.forEach((cat) => {
+            (cat.ranges || []).forEach((r) => {
+                minS = Math.min(minS, timeToSlot(r.start));
+                maxE = Math.max(maxE, timeToSlot(r.end));
+            });
+        });
+        if (minS < this.startAbs()) this.state.scheduleStart = slotToTime(minS);
+        if (maxE > this.endAbs()) this.state.scheduleEnd = slotToTime(maxE);
+        if (this.state.scheduleStart !== prevStart && timeToSlot(this.state.scheduleStart) < timeToSlot(prevStart)) {
+            this.state.nowMode = "demo";
+            this.state.nowOverride = this.state.scheduleStart;
+        }
+    },
+
+    clampDemoNow({ snapIfOutside = true, snapIfAllPast = false } = {}) {
+        if (this.state.nowMode !== "demo") return false;
+        const start = this.startAbs();
+        const end = this.endAbs();
+        if (end <= start) return false;
+        const now = timeToSlot(this.state.nowOverride || this.state.scheduleStart);
+        let snap = false;
+        if (snapIfOutside && (now < start || now >= end)) snap = true;
+        if (snapIfAllPast) {
+            const demanded = this.demandedAbsSlots();
+            if (demanded.length && demanded.every((abs) => abs < now)) snap = true;
+        }
+        if (!snap) return false;
+        this.state.nowOverride = this.state.scheduleStart;
+        return true;
+    },
+
+    demandedAbsSlots() {
+        const slots = [];
+        this.state.jobs.forEach((job) => {
+            this.absSlots().forEach((abs) => {
+                if (this.hasDemand(job, abs)) slots.push(abs);
+            });
+        });
+        return slots;
+    },
+
+    allDemandPastLocked() {
+        const slots = this.demandedAbsSlots();
+        return slots.length > 0 && slots.every((abs) => this.isPast(abs));
+    },
+
+    nowLabel() {
+        return this.state.nowMode === "demo"
+            ? `示範而家 ${this.state.nowOverride} · 撳呢度改`
+            : `而家 ${slotToTime(this.nowAbsSlot())} · 撳呢度改`;
+    },
+
+    syncNowUi() {
+        const chip = $("today-now-chip");
+        if (chip) {
+            chip.hidden = false;
+            chip.textContent = this.nowLabel();
+        }
+        const preview = $("more-now-preview");
+        if (preview) preview.textContent = `今日會顯示：${this.nowLabel()}`;
+        this.renderLockBanner("today-lock-banner");
+        this.renderLockBanner("resolve-lock-banner");
+        const startBtn = $("today-now-to-start");
+        if (startBtn) {
+            const show = this.state.nowMode === "demo"
+                && timeToSlot(this.state.nowOverride) > this.startAbs();
+            startBtn.hidden = !show;
+            startBtn.textContent = `將而家設為開始時間（${this.state.scheduleStart}）`;
+        }
+    },
+
+    setDemoNow(timeStr, { silent = false } = {}) {
+        const next = normalizeClock(timeStr);
+        this.state.nowMode = "demo";
+        this.state.nowOverride = next;
+        const startBefore = this.state.scheduleStart;
+        if (timeToSlot(next) < this.startAbs()) {
+            this.state.scheduleStart = next;
+        }
+        if (timeToSlot(next) >= this.endAbs()) {
+            this.state.nowOverride = this.state.scheduleStart;
+        }
+        this.save();
+        if (!silent) this.toast(`示範而家已設為 ${this.state.nowOverride}`);
+        if (this.state.scheduleStart !== startBefore) this.render();
+        else {
+            this.syncNowUi();
+            if (this.ui.tab === "today") this.renderToday();
+            if (this.ui.tab === "resolve") this.renderResolve();
+        }
+        return true;
+    },
+
+    snapDemoNowToStart() {
+        this.state.nowMode = "demo";
+        this.state.nowOverride = this.state.scheduleStart;
+        this.save();
+        this.toast(`示範而家已設為開始時間 ${this.state.nowOverride}`);
+        this.closeOverlay("sheet");
+        this.render();
+    },
+
+    setScheduleStart(v) {
+        if (timeToSlot(v) >= this.endAbs()) return;
+        const prev = this.state.scheduleStart;
+        this.state.scheduleStart = v;
+        if (prev !== v) {
+            this.state.nowMode = "demo";
+            this.state.nowOverride = v;
+            this.toast(`排班開始已改，示範而家設為 ${v}`);
+        }
+    },
+
+    setScheduleEnd(v) {
+        if (timeToSlot(v) <= this.startAbs()) return;
+        this.state.scheduleEnd = v;
+        if (this.state.nowMode === "demo" && this.nowAbsSlot() >= this.endAbs()) {
+            this.state.nowOverride = this.state.scheduleStart;
+        }
+    },
+
+    lockBannerCopy() {
+        if (this.state.nowMode === "demo") {
+            return "示範時間太遲，可見時段全部已鎖，重算唔會填。請把「示範而家」調去開始時間，或撳生成草稿。";
+        }
+        return "而家已經過咗可見時段，全部需求格當已過鎖定。請去更多改排班／示範時間，或撳生成草稿。";
+    },
+
+    renderLockBanner(targetId) {
+        const el = $(targetId);
+        if (!el) return;
+        if (!this.allDemandPastLocked()) {
+            el.hidden = true;
+            el.innerHTML = "";
+            return;
+        }
+        el.hidden = false;
+        el.innerHTML = `<p>${this.lockBannerCopy()}</p>
+            <button type="button" class="btn-primary" data-snap-now>將而家設為開始時間</button>
+            <button type="button" class="btn-secondary" data-go-more>去更多</button>`;
+        el.querySelector("[data-snap-now]")?.addEventListener("click", () => this.snapDemoNowToStart());
+        el.querySelector("[data-go-more]")?.addEventListener("click", () => this.setTab("more"));
     },
 
     nowDate() {
@@ -424,11 +617,7 @@ const App = {
 
     render() {
         $("today-date").textContent = formatLongDate(new Date());
-        const chip = $("today-now-chip");
-        chip.hidden = false;
-        chip.textContent = this.state.nowMode === "demo"
-            ? `示範而家 ${this.state.nowOverride} · 過去已鎖`
-            : `而家 ${slotToTime(this.nowAbsSlot())}`;
+        this.syncNowUi();
         if (this.ui.tab === "today") this.renderToday();
         if (this.ui.tab === "staff") this.renderStaff();
         if (this.ui.tab === "resolve") this.renderResolve();
@@ -534,6 +723,69 @@ const App = {
                 end: Number(btn.dataset.end),
             }));
         });
+    },
+
+    openNowSheet() {
+        this.ui.sheet = { kind: "now" };
+        const current = this.state.nowMode === "demo"
+            ? normalizeClock(this.state.nowOverride || this.state.scheduleStart)
+            : slotToTime(this.nowAbsSlot());
+        $("sheet-title").textContent = "設定而家幾點";
+        $("sheet-actions").innerHTML = `
+            <p class="hint" style="text-align:left;margin:0 0 10px;">今日 chip 顯示嘅時間。改呢度會即時存檔，唔會彈返 09:45。</p>
+            <button type="button" class="sheet-btn ${this.state.nowMode === "demo" ? "is-on" : ""}" data-act="mode-demo">示範時間</button>
+            <button type="button" class="sheet-btn ${this.state.nowMode === "live" ? "is-on" : ""}" data-act="mode-live">用電話真實時間</button>
+            <label class="field-label" for="now-time-input">示範而家</label>
+            <input id="now-time-input" class="now-time-input" type="time" step="300" value="${current}">
+            <button type="button" class="sheet-btn" data-act="to-start">將而家設為開始時間（${this.state.scheduleStart}）</button>
+            <button type="button" class="sheet-btn sheet-btn-primary" data-act="apply">套用呢個時間</button>
+            <button type="button" class="sheet-btn is-cancel" data-act="cancel">取消</button>`;
+        $("sheet-actions").onclick = (e) => {
+            const act = e.target.closest("[data-act]")?.dataset.act;
+            if (!act) return;
+            if (act === "cancel") return this.closeOverlay("sheet");
+            if (act === "mode-live") {
+                this.state.nowMode = "live";
+                this.save();
+                this.closeOverlay("sheet");
+                this.render();
+                this.toast("已改用電話真實時間");
+                return;
+            }
+            if (act === "mode-demo") {
+                this.state.nowMode = "demo";
+                const input = $("now-time-input");
+                if (input?.value) this.state.nowOverride = normalizeClock(input.value);
+                this.save();
+                this.syncNowUi();
+                return;
+            }
+            if (act === "to-start") {
+                this.snapDemoNowToStart();
+                return;
+            }
+            if (act === "apply") {
+                const input = $("now-time-input");
+                const value = input && input.value ? input.value : this.state.scheduleStart;
+                this.closeOverlay("sheet");
+                this.setDemoNow(value);
+                if (this.ui.tab === "more") this.render();
+            }
+        };
+        $("sheet").hidden = false;
+        const input = $("now-time-input");
+        if (input) {
+            const commit = () => {
+                if (!input.value) return;
+                this.state.nowMode = "demo";
+                this.state.nowOverride = normalizeClock(input.value);
+                this.save();
+                this.syncNowUi();
+            };
+            input.addEventListener("change", commit);
+            input.addEventListener("input", commit);
+            input.addEventListener("blur", commit);
+        }
     },
 
     openSheet(block) {
@@ -786,9 +1038,38 @@ const App = {
         return gaps;
     },
 
+    hasAnyAssignment() {
+        return this.state.jobs.some((job) =>
+            this.absSlots().some((abs) => this.hasDemand(job, abs) && this.cell(job.id, abs)?.staffId)
+        );
+    },
+
+    hasDemandSlots() {
+        return this.state.jobs.some((job) => this.absSlots().some((abs) => this.hasDemand(job, abs)));
+    },
+
     renderResolve() {
         const gaps = this.unfilledGaps();
         const last = this.state.lastSolve;
+        const emptyRoster = this.hasDemandSlots() && !this.hasAnyAssignment();
+        const allPast = this.allDemandPastLocked();
+        const lead = $("resolve-lead");
+        const btnResolve = $("btn-resolve");
+        const btnDraft = $("btn-draft");
+        if (lead && btnResolve && btnDraft) {
+            if (emptyRoster || allPast) {
+                lead.textContent = allPast
+                    ? this.lockBannerCopy()
+                    : "未有編更。撳「生成草稿」用 OR-Tools 按編號人手同崗位需求填格。";
+                btnDraft.className = "btn-primary btn-xl";
+                btnResolve.className = "btn-secondary btn-xl";
+            } else {
+                lead.textContent = "每一次重算都會呼叫後端 OR-Tools CP-SAT。已確認同已過時段會鎖住；「生成草稿」會忽略示範「而家」，重新填晒需求格。";
+                btnResolve.className = "btn-primary btn-xl";
+                btnDraft.className = "btn-secondary btn-xl";
+            }
+        }
+        this.renderLockBanner("resolve-lock-banner");
         const gapHtml = gaps.length
             ? gaps.map((g) => `<div class="gap-row"><span>${g.time}</span><strong class="err-text">${g.job} 空缺</strong></div>`).join("")
             : `<p class="ok-text">而家冇未填空缺。</p>`;
@@ -803,7 +1084,9 @@ const App = {
                     ${last.note ? `<p class="hint">${last.note}</p>` : ""}
                     <p class="hint">時間：${last.at}</p>
                     <p>求解器回報未填：${last.unfilled} 格　級別：${last.level || "—"}</p>`
-                    : "<p class='hint'>未重算過。示範數據已可直接改，唔使等求解器。</p>"}
+                    : emptyRoster
+                        ? "<p class='hint'>未有編更。設定人手同崗位之後，撳「生成草稿」填格。</p>"
+                        : "<p class='hint'>未重算過。示範數據已可直接改，唔使等求解器。</p>"}
             </div>`;
     },
 
@@ -833,26 +1116,48 @@ const App = {
         return { locked, unavailable };
     },
 
-    applySolveGrid(grid) {
+    applySolveGrid(grid, { asDraft = false } = {}) {
         const start = this.startAbs();
+        const byCell = new Map();
+        Object.entries(grid || {}).forEach(([name, row]) => {
+            const list = Array.isArray(row) ? row : Object.values(row || {});
+            list.forEach((code, rel) => {
+                if (!code || code === "R") return;
+                byCell.set(`${start + rel}:${code}`, String(name));
+            });
+        });
         this.state.jobs.forEach((job) => {
             this.absSlots().forEach((abs) => {
                 if (!this.hasDemand(job, abs)) return;
-                if (this.isLocked(job.id, abs)) return;
-                let found = null;
-                Object.entries(grid || {}).forEach(([name, row]) => {
-                    const rel = abs - start;
-                    if (row && row[rel] === job.code) found = name;
-                });
-                const staff = this.state.staff.find((s) => s.name === found);
-                this.state.cells[cellKey(job.id, abs)] = { staffId: staff ? staff.id : null, confirmed: false };
+                const existing = this.cell(job.id, abs);
+                if (!asDraft) {
+                    if (this.isConfirmed(job.id, abs)) return;
+                    if (this.isPast(abs) && existing?.staffId) return;
+                }
+                const found = byCell.get(`${abs}:${job.code}`) || null;
+                const staff = this.state.staff.find((s) => String(s.name) === String(found));
+                this.state.cells[cellKey(job.id, abs)] = {
+                    staffId: staff ? staff.id : null,
+                    confirmed: asDraft ? false : Boolean(existing?.confirmed),
+                };
             });
         });
     },
 
     async resolve(asDraft) {
         if (this.ui.resolving) return;
+        if (!this.state.staff.length) {
+            this.toast("請先加入人手（例如批量 1–10）");
+            this.setTab("more");
+            return;
+        }
+        if (!this.hasDemandSlots()) {
+            this.toast("請先設定崗位需求時段");
+            this.setTab("more");
+            return;
+        }
         this.ui.resolving = true;
+        this.setTab("resolve");
         const progress = $("resolve-progress");
         let secs = 0;
         progress.hidden = false;
@@ -863,7 +1168,7 @@ const App = {
         }, 1000);
         const { locked, unavailable } = this.buildLocksAndUnavailable();
         const payload = {
-            employee_names: this.state.staff.map((s) => s.name),
+            employee_names: this.state.staff.map((s) => String(s.name)),
             schedule_period: `${this.state.scheduleStart}–${this.state.scheduleEnd}`,
             job_requirements: this.buildJobRequirements(),
             max_consecutive_work_minutes: this.state.constraints.maxConsecutiveWorkMinutes,
@@ -874,7 +1179,7 @@ const App = {
             locked_assignments: asDraft ? [] : locked,
             unavailable: asDraft ? [] : unavailable,
             soften_workload_balance: true,
-            max_solve_seconds: 25,
+            max_solve_seconds: Math.min(90, 20 + this.state.staff.length),
         };
         try {
             const res = await fetch("/schedule", {
@@ -884,7 +1189,7 @@ const App = {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-            this.applySolveGrid(data.solution_grid || {});
+            this.applySolveGrid(data.solution_grid || {}, { asDraft });
             const report = data.report || {};
             this.state.lastSolve = {
                 status: report.status || "未知",
@@ -894,7 +1199,11 @@ const App = {
                 at: new Date().toLocaleTimeString("zh-HK", { hour: "2-digit", minute: "2-digit" }),
             };
             this.setTab("today");
-            this.toast(asDraft ? "草稿已由 OR-Tools 生成" : `重算完成：${report.status}，空缺 ${(report.unfilled_job_slots || []).length} 格`);
+            if (!asDraft && this.allDemandPastLocked() && !this.hasAnyAssignment()) {
+                this.toast("示範時間太遲，可見時段全部已鎖，重算唔會填");
+            } else {
+                this.toast(asDraft ? "草稿已由 OR-Tools 生成" : `重算完成：${report.status}，空缺 ${(report.unfilled_job_slots || []).length} 格`);
+            }
         } catch (err) {
             this.toast(`重算失敗：${err.message}`);
             this.state.lastSolve = {
@@ -946,21 +1255,23 @@ const App = {
             </div>`).join("");
         $("more-root").innerHTML = `
             <div class="more-card">
-                <h3>崗位要求</h3>
-                <p class="hint">得呢四類：ARR、DEP、KIOSK (A)、KIOSK (D)。改崗位數會加／減軌道（例如 ARR-1、ARR-2），每軌道每格仍然只派一人。已確認／已過時段唔會因為減崗洗走。</p>
-                ${jobCards}
-            </div>
-            <div class="more-card">
                 <h3>而家幾點</h3>
+                <p id="more-now-preview" class="now-preview">${this.nowLabel()}</p>
+                <button type="button" class="btn-primary" id="more-pick-now">改示範而家</button>
+                <button type="button" class="btn-secondary" id="more-now-to-start">將而家設為開始時間（${this.state.scheduleStart}）</button>
                 <div class="field"><label>時間來源</label>
                     <select id="more-now-mode">
                         <option value="demo" ${this.state.nowMode === "demo" ? "selected" : ""}>示範時間（方便試鎖定）</option>
                         <option value="live" ${this.state.nowMode === "live" ? "selected" : ""}>用電話真實時間</option>
                     </select>
                 </div>
-                <div class="field"><label>示範而家</label>
-                    <select id="more-now">${opt(times.filter((t) => t >= this.state.scheduleStart && t < this.state.scheduleEnd), this.state.nowOverride)}</select>
-                </div>
+                <p class="hint">唔好用舊嘅下拉選單（iPhone 會食咗變更）。撳上面掣或今日藍色 chip，用系統時間選擇器。改排班開始會自動把「而家」設成開始時間。</p>
+            </div>
+            <div class="more-card">
+                <h3>崗位要求</h3>
+                <p class="hint">得呢四類：ARR、DEP、KIOSK (A)、KIOSK (D)。改崗位數會加／減軌道（例如 ARR-1、ARR-2），每軌道每格仍然只派一人。已確認／已過時段唔會因為減崗洗走。需求時段如果早過而家嘅排班開始，會自動拉闊時間軸。</p>
+                ${jobCards}
+                <button type="button" class="btn-primary" id="more-generate-draft" style="margin-top:12px;">用 OR-Tools 生成草稿</button>
             </div>
             <div class="more-card">
                 <h3>排班時段</h3>
@@ -984,10 +1295,10 @@ const App = {
             </div>
             <div class="more-card">
                 <h3>人手名單（${this.state.staff.length}）</h3>
-                <p class="hint">批量加入用純編號，例如由 1 至 20。已有嘅編號會跳過，示範人名會留低。</p>
+                <p class="hint">批量加入用純編號，例如 1–20，最高 99。會清走舊中文示範名同佢哋嘅編更，只留編號。已有編號會跳過。</p>
                 <div class="bulk-row">
-                    <div class="field"><label for="more-bulk-from">由</label><input id="more-bulk-from" type="number" min="1" max="99" value="1"></div>
-                    <div class="field"><label for="more-bulk-to">至</label><input id="more-bulk-to" type="number" min="1" max="99" value="20"></div>
+                    <div class="field"><label for="more-bulk-from">由</label><input id="more-bulk-from" type="number" min="1" max="99" inputmode="numeric" value="1"></div>
+                    <div class="field"><label for="more-bulk-to">至</label><input id="more-bulk-to" type="number" min="1" max="99" inputmode="numeric" value="20" placeholder="最高 99"></div>
                 </div>
                 <button type="button" class="btn-primary" id="more-bulk-add">批量加入</button>
                 <div id="staff-mini-list" class="staff-mini-list">
@@ -1007,17 +1318,25 @@ const App = {
             <div class="more-card">
                 <button type="button" class="btn-secondary" id="more-reset">重設示範數據</button>
                 <a class="more-link" href="/desktop">開啟舊版電腦介面</a>
-                <p class="hint">即時對調／走咗只改本地編更。每一次「重算」或「生成草稿」先會行 CP-SAT。已確認同已過時段唔會被求解器改寫；無解時會保留鎖定格並列出剩餘空缺，唔會卡住你。</p>
+                <p class="hint">即時對調／走咗只改本地編更。每一次「重算」或「生成草稿」先會行 CP-SAT。「生成草稿」會忽略示範「而家」嘅過去鎖定，填晒需求格；「重算」會保留已確認同已過時段。無解時會列出剩餘空缺，唔會卡住你。</p>
             </div>`;
 
         const bindVal = (id, fn) => {
             const el = $(id);
             if (el) el.addEventListener("change", () => { fn(el.value); this.render(); });
         };
-        bindVal("more-now-mode", (v) => { this.state.nowMode = v; });
-        bindVal("more-now", (v) => { this.state.nowOverride = v; });
-        bindVal("more-start", (v) => { if (timeToSlot(v) < this.endAbs()) this.state.scheduleStart = v; });
-        bindVal("more-end", (v) => { if (timeToSlot(v) > this.startAbs()) this.state.scheduleEnd = v; });
+        bindVal("more-now-mode", (v) => { this.state.nowMode = v; this.save(); });
+        $("more-pick-now").addEventListener("click", () => this.openNowSheet());
+        $("more-now-to-start").addEventListener("click", () => this.snapDemoNowToStart());
+        bindVal("more-start", (v) => {
+            this.setScheduleStart(v);
+        });
+        bindVal("more-end", (v) => {
+            this.setScheduleEnd(v);
+            if (this.clampDemoNow({ snapIfOutside: true, snapIfAllPast: true })) {
+                this.toast(`示範而家已設為開始時間 ${this.state.nowOverride}`);
+            }
+        });
         bindVal("more-maxw", (v) => { this.state.constraints.maxConsecutiveWorkMinutes = Number(v); });
         bindVal("more-rest", (v) => { this.state.constraints.restAfterWorkMinutes = Number(v); });
         bindVal("more-wt", (v) => { this.state.constraints.workTargetMinutes = Number(v); });
@@ -1029,6 +1348,7 @@ const App = {
             this.bulkAddStaff($("more-bulk-from").value, $("more-bulk-to").value);
         });
         $("more-clear-staff").addEventListener("click", () => this.clearStaff());
+        $("more-generate-draft").addEventListener("click", () => this.resolve(true));
         $("more-root").querySelectorAll("[data-del]").forEach((btn) => {
             btn.addEventListener("click", () => this.removeStaff(btn.dataset.del));
         });

@@ -89,6 +89,46 @@ class SchedulerMobileTests(unittest.TestCase):
         self.assertEqual(set(grid.keys()), set(names))
         self.assertEqual(len(grid["1"]), 8)
 
+    def test_numbered_10_staff_arr_dep_empty_locks(self):
+        names = [str(i) for i in range(1, 11)]
+        jobs = [
+            "ARR-1 09:00–13:00",
+            "ARR-2 09:00–13:00",
+            "DEP-1 09:30–13:00",
+        ]
+        grid, report = make_scheduler(
+            employee_names=names,
+            K_employees=10,
+            job_requirements_raw=jobs,
+            locked_assignments=[],
+        ).solve()
+        self.assertIn(report["status"], {"OPTIMAL", "FEASIBLE", "FEASIBLE_LOCKS_ONLY"})
+        filled = [code for row in grid.values() for code in row if code and code != "R"]
+        self.assertGreater(len(filled), 0)
+        self.assertTrue({"ARR-1", "ARR-2", "DEP-1"} & set(filled) or report["unfilled_job_slots"])
+
+    def test_early_morning_arr4_numbered_staff(self):
+        names = [str(i) for i in range(1, 11)]
+        jobs = [
+            "ARR-1 06:30–12:00",
+            "ARR-2 06:30–12:00",
+            "ARR-3 06:30–12:00",
+            "ARR-4 06:30–12:00",
+        ]
+        grid, report = make_scheduler(
+            employee_names=names,
+            K_employees=10,
+            schedule_period_str="06:30–12:00",
+            job_requirements_raw=jobs,
+            locked_assignments=[],
+            max_solve_seconds=30.0,
+        ).solve()
+        self.assertIn(report["status"], {"OPTIMAL", "FEASIBLE", "FEASIBLE_LOCKS_ONLY"})
+        self.assertEqual(len(grid["1"]), 11)
+        filled = [code for row in grid.values() for code in row if code and code != "R"]
+        self.assertGreater(len(filled), 0)
+        self.assertTrue({"ARR-1", "ARR-2", "ARR-3", "ARR-4"} & set(filled) or report["unfilled_job_slots"])
+
     def test_time_helpers(self):
         self.assertEqual(time_to_slot("09:00"), 18)
         self.assertEqual(time_to_slot("09:30"), 19)

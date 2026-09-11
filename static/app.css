@@ -67,18 +67,70 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
 .text-btn { font-size: 28px; line-height: 1; }
 
 .now-chip {
-    margin: 0 20px 8px;
-    display: inline-flex;
+    margin: 0 16px 8px;
+    display: flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
     background: var(--blue-soft);
     color: var(--blue);
-    border-radius: 999px;
-    padding: 6px 12px;
-    font-size: 13px;
-    font-weight: 600;
-    max-width: calc(100% - 40px);
+    border-radius: 14px;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 700;
+    width: calc(100% - 32px);
+    max-width: none;
+    min-height: 44px;
+    text-align: center;
+    box-shadow: inset 0 0 0 1px #c9dcff;
 }
+.now-start-btn {
+    margin: 0 16px 10px;
+    display: block;
+    width: calc(100% - 32px);
+    min-height: 44px;
+    border-radius: 14px;
+    background: #fff1f0;
+    color: #b42318;
+    font-weight: 700;
+    font-size: 15px;
+    box-shadow: inset 0 0 0 1px #ffd1cd;
+}
+.now-start-btn[hidden] { display: none !important; }
+.now-preview {
+    margin: 0 0 12px;
+    font-weight: 700;
+    color: var(--blue);
+    font-size: 16px;
+}
+.now-time-input {
+    width: 100%;
+    min-height: 52px;
+    margin: 8px 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 0 12px;
+    font-size: 20px;
+    background: #fafafa;
+}
+.sheet-btn-primary { background: var(--blue); color: #fff; }
+.sheet-btn.is-on { box-shadow: inset 0 0 0 2px var(--blue); font-weight: 700; }
+.lock-banner .btn-primary { min-height: 44px; font-size: 15px; margin-bottom: 8px; }
+.lock-banner {
+    margin: 0 16px 12px;
+    background: #fff1f0;
+    color: #b42318;
+    border: 1px solid #ffd1cd;
+    border-radius: 14px;
+    padding: 12px 14px;
+    font-size: 14px;
+    line-height: 1.45;
+    font-weight: 600;
+}
+.lock-banner[hidden] { display: none !important; }
+.lock-banner p { margin: 0 0 10px; }
+.lock-banner .btn-secondary { min-height: 44px; font-size: 15px; }
+#view-resolve .lock-banner { margin: 0 0 12px; }
 
 .timeline-root { padding-bottom: 12px; }
 .tl-scroll {
