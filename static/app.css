@@ -178,7 +178,7 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 10px;
 }
-.block.is-locked { opacity: 0.72; }
+.block.is-num { font-size: 20px; font-variant-numeric: tabular-nums; letter-spacing: 0; }
 .block.is-confirmed::after {
     content: "✓";
     position: absolute;
@@ -232,8 +232,11 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
     width: 36px; height: 36px; border-radius: 50%;
     color: #fff; font-weight: 700; display: inline-flex;
     align-items: center; justify-content: center;
+    font-variant-numeric: tabular-nums;
 }
+.avatar.is-num { width: 44px; height: 44px; font-size: 18px; }
 .staff-name { font-weight: 700; font-size: 16px; }
+.staff-name.is-num { font-size: 26px; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; line-height: 1; }
 .staff-status { margin-left: auto; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
 .dot.is-off { background: #c7c7cc; }
@@ -306,6 +309,15 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
     background: #fafafa;
 }
 .staff-mini { display: flex; align-items: center; gap: 10px; min-height: 48px; }
+.staff-mini-list { max-height: 280px; overflow-y: auto; margin: 8px 0 12px; }
+.staff-mini-name { flex: 1; font-weight: 650; }
+.staff-mini-name.is-num { font-size: 22px; font-variant-numeric: tabular-nums; }
+.staff-del {
+    min-width: 44px; min-height: 44px; border-radius: 12px;
+    background: #fff1f0; color: var(--red); font-weight: 650;
+}
+.bulk-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sheet-btn.is-num { font-size: 22px; font-variant-numeric: tabular-nums; }
 .more-link { color: var(--blue); text-decoration: none; display: block; min-height: 44px; line-height: 44px; }
 .job-edit {
     padding: 12px 0;
@@ -367,7 +379,7 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
 }
 .sheet-handle { width: 36px; height: 5px; border-radius: 99px; background: #d1d1d6; margin: 6px auto 10px; }
 .sheet-title { text-align: center; font-size: 17px; margin: 6px 8px 12px; }
-.sheet-actions { display: grid; gap: 8px; }
+.sheet-actions { display: grid; gap: 8px; max-height: 55vh; overflow-y: auto; }
 .sheet-btn {
     min-height: 52px;
     background: #fff;

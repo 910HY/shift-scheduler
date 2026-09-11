@@ -82,6 +82,13 @@ class SchedulerMobileTests(unittest.TestCase):
         codes = {u["job_code"] for u in report["unfilled_job_slots"]}
         self.assertTrue(assigned or codes)
 
+    def test_numbered_employee_names_solve(self):
+        names = [str(i) for i in range(1, 21)]
+        grid, report = make_scheduler(employee_names=names, K_employees=20).solve()
+        self.assertIn(report["status"], {"OPTIMAL", "FEASIBLE", "FEASIBLE_LOCKS_ONLY"})
+        self.assertEqual(set(grid.keys()), set(names))
+        self.assertEqual(len(grid["1"]), 8)
+
     def test_time_helpers(self):
         self.assertEqual(time_to_slot("09:00"), 18)
         self.assertEqual(time_to_slot("09:30"), 19)
