@@ -72,6 +72,9 @@ function staffColorFor(indexOrNumber) {
     return STAFF_COLORS[Math.abs(idx) % STAFF_COLORS.length];
 }
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+function normJobCode(code) {
+    return String(code || "").replace(/\s+/g, "").replace(/[()]/g, "").toUpperCase();
+}
 
 function createDemoState() {
     const categories = [
@@ -652,7 +655,9 @@ const App = {
         const start = this.startAbs();
         const count = this.slotCount();
         const slotW = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--slot-w"), 10) || 86;
-        const width = count * slotW;
+        const labelW = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--label-w"), 10) || 108;
+        const trackW = Math.max(count * slotW, slotW);
+        const totalW = labelW + trackW;
         const now = this.nowDate();
         const nowMin = now.getHours() * 60 + now.getMinutes();
         const startMin = start * SLOT_MIN;
@@ -663,7 +668,9 @@ const App = {
             ? `<div class="now-line" style="left:${nowPct}%"></div>`
             : "";
         const renderTrack = (job, compact) => {
-            const blocks = this.blocksForJob(job).map((block) => {
+            const demandBlocks = this.blocksForJob(job);
+            const onAxis = demandBlocks.length > 0;
+            const blocks = demandBlocks.map((block) => {
                 const left = ((block.start - start) / count) * 100;
                 const w = ((block.end - block.start) / count) * 100;
                 const locked = block.slots.every((s) => this.isLocked(job.id, s));
@@ -683,6 +690,9 @@ const App = {
                     : `<span class="gap-ico">👤</span><span>空缺</span>`;
                 return `<button type="button" class="${cls}" style="${style}" data-job="${job.id}" data-start="${block.start}" data-end="${block.end}">${label}</button>`;
             }).join("");
+            const emptyNote = !onAxis && job.ranges?.[0]
+                ? `<div class="tl-empty-note">需求由 ${job.ranges[0].start} 起，向右滑</div>`
+                : "";
             const title = compact ? `${job.track}` : job.name;
             return `<div class="tl-row${compact ? " is-track" : ""}">
                 <div class="tl-label">
@@ -691,27 +701,29 @@ const App = {
                     </div>
                     ${compact ? "" : `<div class="tl-job-sub">崗位需求：${job.demand}</div>`}
                 </div>
-                <div class="tl-track" style="width:${width}px">${nowLine}${blocks}</div>
+                <div class="tl-track" style="width:${trackW}px">${nowLine}${blocks}${emptyNote}</div>
             </div>`;
         };
         const rows = this.state.categories.map((cat) => {
             const tracks = this.state.jobs.filter((j) => j.categoryId === cat.id);
+            const earliest = (cat.ranges || []).reduce((min, r) => (!min || r.start < min ? r.start : min), "");
+            const lateNote = earliest && earliest > this.state.scheduleStart ? ` · 由 ${earliest} 起，向右滑` : "";
             const head = `<div class="tl-row tl-group-head">
                 <div class="tl-label">
                     <div class="tl-job-top">
                         <span class="job-badge" style="background:${cat.accent}">${cat.short}</span>${cat.name}
                     </div>
-                    <div class="tl-job-sub">崗位需求：${cat.count}</div>
+                    <div class="tl-job-sub">崗位需求：${cat.count}${lateNote}</div>
                 </div>
-                <div class="tl-track" style="width:${width}px">${nowLine}</div>
+                <div class="tl-track" style="width:${trackW}px">${nowLine}</div>
             </div>`;
             return `<div class="tl-group">${head}${tracks.map((job) => renderTrack(job, true)).join("")}</div>`;
         }).join("");
 
-        $("timeline-root").innerHTML = `<div class="tl-scroll"><div class="tl">
+        $("timeline-root").innerHTML = `<div class="tl-scroll"><div class="tl" style="width:${totalW}px;min-width:${totalW}px">
             <div class="tl-times">
                 <div class="tl-corner"></div>
-                <div class="tl-time-track" style="width:${width}px;grid-template-columns:repeat(${count},1fr)">${times}</div>
+                <div class="tl-time-track" style="width:${trackW}px;grid-template-columns:repeat(${count},${slotW}px)">${times}</div>
             </div>
             ${rows}
         </div></div>`;
@@ -723,6 +735,19 @@ const App = {
                 end: Number(btn.dataset.end),
             }));
         });
+        this.bindTimelineScroll();
+    },
+
+    bindTimelineScroll() {
+        const scroller = $("timeline-root");
+        const hint = $("tl-scroll-hint");
+        if (!scroller || !hint) return;
+        const update = () => {
+            const overflow = scroller.scrollWidth > scroller.clientWidth + 12;
+            hint.hidden = !overflow || scroller.scrollLeft > 28;
+        };
+        scroller.onscroll = update;
+        requestAnimationFrame(update);
     },
 
     openNowSheet() {
@@ -1094,7 +1119,7 @@ const App = {
         return this.state.jobs.map((job) => {
             const ranges = job.ranges.map((r) => `${r.start}–${r.end}`).join(",");
             return `${job.code} ${ranges}`;
-        });
+        }).filter((line) => line.includes("–"));
     },
 
     buildLocksAndUnavailable() {
@@ -1123,7 +1148,7 @@ const App = {
             const list = Array.isArray(row) ? row : Object.values(row || {});
             list.forEach((code, rel) => {
                 if (!code || code === "R") return;
-                byCell.set(`${start + rel}:${code}`, String(name));
+                byCell.set(`${start + rel}:${normJobCode(code)}`, String(name));
             });
         });
         this.state.jobs.forEach((job) => {
@@ -1134,7 +1159,7 @@ const App = {
                     if (this.isConfirmed(job.id, abs)) return;
                     if (this.isPast(abs) && existing?.staffId) return;
                 }
-                const found = byCell.get(`${abs}:${job.code}`) || null;
+                const found = byCell.get(`${abs}:${normJobCode(job.code)}`) || null;
                 const staff = this.state.staff.find((s) => String(s.name) === String(found));
                 this.state.cells[cellKey(job.id, abs)] = {
                     staffId: staff ? staff.id : null,

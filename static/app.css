@@ -23,7 +23,7 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; padding: 0; background: var(--card); color: var(--text); }
+html, body { margin: 0; padding: 0; background: var(--card); color: var(--text); overflow-x: hidden; max-width: 100%; }
 body {
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang HK", "Noto Sans TC", sans-serif;
     min-height: 100dvh;
@@ -35,10 +35,12 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
     min-height: 100dvh;
     padding-top: var(--safe-t);
     padding-bottom: calc(var(--tabbar-h) + var(--safe-b) + 8px);
+    overflow-x: hidden;
+    max-width: 100%;
 }
 
 .view[hidden] { display: none !important; }
-.view { min-height: calc(100dvh - var(--tabbar-h) - var(--safe-b)); }
+.view { min-height: calc(100dvh - var(--tabbar-h) - var(--safe-b)); max-width: 100%; overflow-x: hidden; }
 
 .page-header {
     display: flex;
@@ -132,20 +134,36 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
 .lock-banner .btn-secondary { min-height: 44px; font-size: 15px; }
 #view-resolve .lock-banner { margin: 0 0 12px; }
 
-.timeline-root { padding-bottom: 12px; }
-.tl-scroll {
+.timeline-root {
+    width: 100%;
+    max-width: 100%;
     overflow-x: auto;
+    overflow-y: visible;
     -webkit-overflow-scrolling: touch;
-    padding-bottom: 8px;
+    touch-action: pan-x pan-y;
+    overscroll-behavior-x: contain;
+    padding-bottom: 16px;
 }
-.tl-scroll::-webkit-scrollbar { height: 0; }
-
+.tl-scroll-hint {
+    margin: 0 16px 8px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+}
+.tl-scroll-hint[hidden] { display: none !important; }
+.tl-scroll {
+    display: block;
+    width: max-content;
+    min-width: 100%;
+}
 .tl {
-    min-width: max-content;
+    display: block;
+    width: max-content;
 }
 .tl-times, .tl-row {
     display: grid;
-    grid-template-columns: var(--label-w) 1fr;
+    grid-template-columns: var(--label-w) max-content;
+    width: max-content;
     align-items: stretch;
 }
 .tl-times {
@@ -158,6 +176,8 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
 .tl-time-track, .tl-track {
     position: relative;
     height: 36px;
+    flex: none;
+    touch-action: pan-x;
 }
 .tl-time-track {
     display: grid;
@@ -217,6 +237,7 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
     padding: 0 8px;
     min-width: 44px;
     overflow: hidden;
+    touch-action: pan-x;
     box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04);
 }
 .block.is-gap {
@@ -239,13 +260,15 @@ button { border: 0; background: none; color: inherit; cursor: pointer; }
     font-size: 11px;
     color: var(--blue);
 }
-.now-line {
+.tl-empty-note {
     position: absolute;
-    top: 0; bottom: 0;
-    width: 2px;
-    background: var(--red);
-    z-index: 1;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 12px;
     pointer-events: none;
+    white-space: nowrap;
 }
 
 .tabbar {

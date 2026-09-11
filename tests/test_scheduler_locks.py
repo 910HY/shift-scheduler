@@ -129,6 +129,32 @@ class SchedulerMobileTests(unittest.TestCase):
         self.assertGreater(len(filled), 0)
         self.assertTrue({"ARR-1", "ARR-2", "ARR-3", "ARR-4"} & set(filled) or report["unfilled_job_slots"])
 
+    def test_kiosk_a_and_d_tracks_fill(self):
+        names = [str(i) for i in range(1, 11)]
+        jobs = [
+            "ARR-1 06:30–13:00",
+            "DEP-1 06:30–13:00",
+            "KIOSK-A-1 06:30–13:00",
+            "KIOSK-A-2 06:30–13:00",
+            "KIOSK-D-1 06:30–13:00",
+            "KIOSK-D-2 06:30–13:00",
+        ]
+        grid, report = make_scheduler(
+            employee_names=names,
+            K_employees=10,
+            schedule_period_str="06:30–13:00",
+            job_requirements_raw=jobs,
+            locked_assignments=[],
+            max_solve_seconds=30.0,
+        ).solve()
+        self.assertIn(report["status"], {"OPTIMAL", "FEASIBLE", "FEASIBLE_LOCKS_ONLY"})
+        filled = {code for row in grid.values() for code in row if code and code != "R"}
+        unfilled = {u["job_code"] for u in report["unfilled_job_slots"]}
+        for code in ("KIOSK-A-1", "KIOSK-A-2", "KIOSK-D-1", "KIOSK-D-2"):
+            self.assertTrue(code in filled or code in unfilled, code)
+        self.assertTrue({"KIOSK-A-1", "KIOSK-A-2"} & filled)
+        self.assertTrue({"KIOSK-D-1", "KIOSK-D-2"} & filled)
+
     def test_time_helpers(self):
         self.assertEqual(time_to_slot("09:00"), 18)
         self.assertEqual(time_to_slot("09:30"), 19)
