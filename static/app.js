@@ -223,7 +223,7 @@ const App = {
         const chip = $("today-now-chip");
         chip.hidden = false;
         chip.textContent = this.state.nowMode === "demo"
-            ? `示範而家 ${this.state.nowOverride}（已過時段已鎖）`
+            ? `示範而家 ${this.state.nowOverride} · 過去已鎖`
             : `而家 ${slotToTime(this.nowAbsSlot())}`;
         if (this.ui.tab === "today") this.renderToday();
         if (this.ui.tab === "staff") this.renderStaff();
@@ -260,11 +260,11 @@ const App = {
         const count = this.slotCount();
         const slotW = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--slot-w"), 10) || 86;
         const width = count * slotW;
-        const nowAbs = this.nowAbsSlot();
-        const times = this.absSlots().map((abs) => {
-            const left = ((abs - start) / count) * 100;
-            return `<span class="tl-time" style="left:${left}%">${slotToTime(abs)}</span>`;
-        }).join("");
+        const now = this.nowDate();
+        const nowMin = now.getHours() * 60 + now.getMinutes();
+        const startMin = start * SLOT_MIN;
+        const nowPct = ((nowMin - startMin) / (count * SLOT_MIN)) * 100;
+        const times = this.absSlots().map((abs) => `<span class="tl-time">${slotToTime(abs)}</span>`).join("");
 
         const rows = this.state.jobs.map((job) => {
             const blocks = this.blocksForJob(job).map((block) => {
@@ -286,8 +286,8 @@ const App = {
                     : `<span class="gap-ico">👤</span><span>空缺</span>`;
                 return `<button type="button" class="${cls}" style="${style}" data-job="${job.id}" data-start="${block.start}" data-end="${block.end}">${label}</button>`;
             }).join("");
-            const nowLine = (nowAbs >= start && nowAbs <= start + count)
-                ? `<div class="now-line" style="left:${((nowAbs - start) / count) * 100}%"></div>`
+            const nowLine = (nowPct >= 0 && nowPct <= 100)
+                ? `<div class="now-line" style="left:${nowPct}%"></div>`
                 : "";
             return `<div class="tl-row">
                 <div class="tl-label">
@@ -303,7 +303,7 @@ const App = {
         $("timeline-root").innerHTML = `<div class="tl-scroll"><div class="tl">
             <div class="tl-times">
                 <div class="tl-corner"></div>
-                <div class="tl-time-track" style="width:${width}px">${times}<span class="tl-time" style="left:100%">${this.state.scheduleEnd}</span></div>
+                <div class="tl-time-track" style="width:${width}px;grid-template-columns:repeat(${count},1fr)">${times}</div>
             </div>
             ${rows}
         </div></div>`;
@@ -532,7 +532,7 @@ const App = {
             if (this.ui.staffFilter === "rest" && status.on) return "";
             const consec = this.consecutiveWorkMinutes(s.id);
             const warn = consec >= maxConsecutiveWorkMinutes
-                ? "已達連續工時上限（軟性提示，唔會鎖死編輯）"
+                ? "已達連續工時上限"
                 : consec >= maxConsecutiveWorkMinutes - SLOT_MIN
                     ? "連續工時將滿"
                     : "";
