@@ -31,6 +31,22 @@ def index():
          logger.error(f"提供 index.html 時發生錯誤: {e}", exc_info=True)
          return "加載主頁時出錯。", 500
 
+@app.route('/desktop')
+def desktop_index():
+    logger.debug("請求 /desktop，提供舊版電腦介面")
+    try:
+        return send_from_directory('.', 'desktop.html')
+    except FileNotFoundError:
+        return "舊版電腦介面 (desktop.html) 未找到。", 404
+
+@app.route('/sw.js')
+def service_worker():
+    return send_from_directory('static', 'sw.js', mimetype='application/javascript')
+
+@app.route('/manifest.webmanifest')
+def web_manifest():
+    return send_from_directory('static', 'manifest.webmanifest', mimetype='application/manifest+json')
+
 @app.route('/schedule', methods=['POST'])
 def create_schedule_api():
     logger.info(f"收到 /schedule 的 POST 請求")
@@ -50,24 +66,50 @@ def create_schedule_api():
         enable_mandatory_break = data.get('enable_mandatory_break', False)
         designated_global_break_period = data.get('designated_global_break_period')
         min_mandatory_break_minutes_raw = data.get('min_mandatory_break_minutes')
+        employee_names = data.get('employee_names') or []
+        locked_assignments = data.get('locked_assignments') or []
+        unavailable = data.get('unavailable') or []
+        soften_workload_balance = data.get('soften_workload_balance', True)
+        max_solve_seconds_raw = data.get('max_solve_seconds')
 
         # --- 參數驗證 ---
         required_keys = [
-            "k_employees", "schedule_period", "job_requirements",
+            "schedule_period", "job_requirements",
             "max_consecutive_work_minutes", "rest_duration_minutes_after_work"
         ]
+        if not employee_names:
+            required_keys.append("k_employees")
         missing_params = [key for key in required_keys if data.get(key) is None]
         if missing_params:
             msg = f"缺少必要的參數: {', '.join(missing_params)}"
             logger.warning(msg)
             return jsonify({"error": msg}), 400
 
+        if isinstance(employee_names, str):
+            employee_names = [n.strip() for n in employee_names.split(',') if n.strip()]
+        if not isinstance(employee_names, list):
+            return jsonify({"error": "employee_names 必須是字符串列表。"}), 400
+        employee_names = [str(n).strip() for n in employee_names if str(n).strip()]
+
         try:
-            k_employees = int(k_employees_raw)
+            if employee_names:
+                k_employees = len(employee_names)
+            else:
+                k_employees = int(k_employees_raw)
             if k_employees <= 0: raise ValueError("員工人數必須大於0")
         except (ValueError, TypeError):
             msg = f"參數類型或數值錯誤: k_employees ('{k_employees_raw}') 必須是有效的正整數。"
             logger.warning(msg); return jsonify({"error": msg}), 400
+
+        if not isinstance(locked_assignments, list):
+            return jsonify({"error": "locked_assignments 必須是列表。"}), 400
+        if not isinstance(unavailable, list):
+            return jsonify({"error": "unavailable 必須是列表。"}), 400
+        try:
+            max_solve_seconds = float(max_solve_seconds_raw) if max_solve_seconds_raw is not None else 30.0
+            max_solve_seconds = min(115.0, max(5.0, max_solve_seconds))
+        except (ValueError, TypeError):
+            max_solve_seconds = 30.0
         try:
             max_consecutive_minutes = int(max_consecutive_minutes_raw)
             if max_consecutive_minutes <= 0: raise ValueError("最大連續工作時間必須大於0")
@@ -114,7 +156,12 @@ def create_schedule_api():
                 rest_duration_minutes_after_work=rest_duration_minutes_after_work,
                 enable_mandatory_break=enable_mandatory_break,
                 designated_global_break_period_str=designated_global_break_period,
-                min_mandatory_break_minutes=min_mandatory_break_minutes
+                min_mandatory_break_minutes=min_mandatory_break_minutes,
+                employee_names=employee_names or None,
+                locked_assignments=locked_assignments,
+                unavailable=unavailable,
+                soften_workload_balance=bool(soften_workload_balance),
+                max_solve_seconds=max_solve_seconds,
             )
             logger.info("開始求解排班...")
             solution_grid, report = scheduler.solve()
