@@ -48,10 +48,13 @@ FIRST_JOB_CODE = 1
 # Constraint packs used by solve fallbacks.
 # full     = original hard rules (consecutive work, continuity, mandatory break)
 # relaxed  = skip windows that overlap locked slots (locks may already violate day-of reality)
-# locks    = only locks / unavailable / no over-assignment / soft demand coverage
+# fill     = skip consecutive-work / same-job continuity / mandatory break; minimise 空缺
+# locks    = same constraint pack as fill (kept as an explicit last CP-SAT pass name)
 LEVEL_FULL = "full"
 LEVEL_RELAXED = "relaxed"
+LEVEL_FILL = "fill"
 LEVEL_LOCKS = "locks"
+GAP_PENALTY = 100000
 
 
 class ShiftSchedulerWithConstraints:
@@ -64,8 +67,9 @@ class ShiftSchedulerWithConstraints:
     - soften_workload_balance: balance is an objective penalty, not a hard lock
     - max_solve_seconds: shorter cap for phone 重算
 
-    Infeasibility is softened: if a level is INFEASIBLE we retry a looser pack,
-    then merge locks-only so the UI can still show remaining 空缺.
+    Infeasibility is softened: if a level is INFEASIBLE we retry a looser pack.
+    If a pack is only FEASIBLE but still has 空缺, we continue to fill-first
+    (skip consecutive-work / same-job continuity) and keep the grid with fewer gaps.
     """
 
     def __init__(self,
@@ -390,8 +394,10 @@ class ShiftSchedulerWithConstraints:
                 model.Add(tasks[e_idx, s_rel] != job_int).OnlyEnforceIf(b_is_assigned.Not())
                 assigned_employees.append(b_is_assigned)
             current_demand_met = model.NewBoolVar(f'demand_met_j{job_int}_s{s_rel}_{level}')
+            # One person per track-slot: never double-book a job cell.
+            model.Add(sum(assigned_employees) <= 1)
             model.Add(sum(assigned_employees) == 1).OnlyEnforceIf(current_demand_met)
-            model.Add(sum(assigned_employees) != 1).OnlyEnforceIf(current_demand_met.Not())
+            model.Add(sum(assigned_employees) == 0).OnlyEnforceIf(current_demand_met.Not())
             unfilled_demands_penalties.append(current_demand_met.Not())
             demand_met_vars[(job_int, s_rel)] = current_demand_met
 
@@ -410,13 +416,13 @@ class ShiftSchedulerWithConstraints:
             if not self.soften_workload_balance and level == LEVEL_FULL:
                 model.Add(diff_w <= 1)
 
-        # Prefer filling gaps; workload spread is a much smaller soft term.
+        # Primary objective: minimise unfilled demand. Workload spread is tiny.
         obj_terms = []
         if unfilled_demands_penalties:
             gap_count = model.NewIntVar(0, len(unfilled_demands_penalties), f'gap_count_{level}')
             model.Add(gap_count == sum(unfilled_demands_penalties))
-            obj_terms.append(gap_count * 1000)
-        if diff_w is not None and self.soften_workload_balance:
+            obj_terms.append(gap_count * GAP_PENALTY)
+        if diff_w is not None and self.soften_workload_balance and level != LEVEL_FILL:
             obj_terms.append(diff_w)
         if obj_terms:
             model.Minimize(sum(obj_terms))
@@ -491,27 +497,70 @@ class ShiftSchedulerWithConstraints:
                 return solved_grid, solved_report
             return grid, report
 
-        remaining = max(5.0, self.max_solve_seconds)
-        attempts = [
-            (LEVEL_FULL, min(remaining, max(8.0, remaining * 0.55))),
-            (LEVEL_RELAXED, min(remaining, max(6.0, remaining * 0.3))),
-            (LEVEL_LOCKS, min(20.0, remaining)),
-        ]
-        last_report = None
+        remaining = max(8.0, self.max_solve_seconds)
         spent = 0.0
-        for level, budget in attempts:
-            budget = min(budget, max(5.0, remaining - spent))
+        last_report = None
+        best = None  # (gap_count, grid, report)
+
+        def take(ok, grid, report):
+            nonlocal best, last_report
+            last_report = report
+            if not ok:
+                return None
+            gaps = len(report.get("unfilled_job_slots") or [])
+            if best is None or gaps < best[0]:
+                best = (gaps, grid, report)
+            return gaps
+
+        def next_budget(share, floor=8.0):
+            nonlocal spent
+            left = max(4.0, remaining - spent)
+            budget = min(left, max(floor, remaining * share))
+            spent += budget
+            return budget
+
+        def run_level(level, share, floor):
+            budget = next_budget(share, floor)
             print(f"CP-SAT 重算：level={level}, budget={budget:.1f}s, locks={len(self.locked_emp_slots)}")
             ok, grid, report = self._solve_once(level, budget)
-            spent += budget
-            last_report = report
-            if ok:
-                if level != LEVEL_FULL:
-                    report["status_note"] = {
-                        LEVEL_RELAXED: "完整約束無解，已放寬與鎖定格重疊的連續工時／連崗規則。已確認同過去時段維持不變。",
-                        LEVEL_LOCKS: "較鬆約束仍無解，只鎖定已確認／過去／離開人手，其餘以填補空缺為目標。",
-                    }.get(level, "")
-                return grid, report
+            return ok, grid, report, take(ok, grid, report)
+
+        ok, grid, report, gaps = run_level(LEVEL_FULL, 0.35, 8.0)
+        if gaps == 0:
+            return grid, report
+
+        # Only spend time on relaxed if the hard pack was infeasible (locks may already
+        # violate consecutive-work). If FULL was feasible-but-gappy, skip to fill-first.
+        if not ok:
+            ok_r, grid_r, report_r, gaps_r = run_level(LEVEL_RELAXED, 0.2, 6.0)
+            if gaps_r == 0:
+                report_r["status_note"] = (
+                    "完整約束無解，已放寬與鎖定格重疊的連續工時／連崗規則。已確認同過去時段維持不變。"
+                )
+                return grid_r, report_r
+
+        if best is None or best[0] > 0:
+            ok_f, grid_f, report_f, gaps_f = run_level(LEVEL_FILL, 0.55, 10.0)
+            if ok_f:
+                n = 0 if gaps_f is None else gaps_f
+                report_f["status_note"] = (
+                    "優先填滿空缺：已放寬連續工時／同一崗位連續，先盡量填晒需求。"
+                    + ("崗位需求已填滿。" if n == 0 else f"仍剩 {n} 格未填（人手或鎖定限制）。")
+                )
+
+        if best:
+            _gaps, grid, report = best
+            level = report.get("solve_level")
+            if level == LEVEL_FILL and not report.get("status_note"):
+                report["status_note"] = (
+                    "優先填滿空缺：已放寬連續工時／同一崗位連續。"
+                    + (f"仍剩 {_gaps} 格未填。" if _gaps else "崗位需求已填滿。")
+                )
+            elif level == LEVEL_RELAXED and not report.get("status_note"):
+                report["status_note"] = (
+                    "完整約束無解，已放寬與鎖定格重疊的連續工時／連崗規則。已確認同過去時段維持不變。"
+                )
+            return grid, report
 
         grid, report = self._locks_only_grid(
             last_report.get("infeasible_reason") if last_report else "求解失敗"

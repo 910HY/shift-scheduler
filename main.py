@@ -221,6 +221,13 @@ def google_verification_file():
         return f"Error serving {GOOGLE_VERIFICATION_FILENAME}.", 500
 # --- 結束 SEO 和驗證文件路由 ---
 
+@app.after_request
+def disable_stale_app_cache(response):
+    path = request.path or ""
+    if path in ("/", "/index.html", "/sw.js") or path.startswith("/static/app."):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
 
 if __name__ == '__main__':
     # 當直接運行 main.py 時 (例如本地開發)，使用 Flask 開發服務器

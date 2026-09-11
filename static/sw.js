@@ -1,4 +1,4 @@
-const CACHE = "shift-mobile-v8";
+const CACHE = "shift-mobile-v9";
 const PRECACHE = ["/", "/static/favicon.png", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

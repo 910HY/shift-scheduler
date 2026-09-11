@@ -1,4 +1,6 @@
 const STORAGE_KEY = "shift-mobile-v4";
+/* Keep ?v= in index.html and CACHE in static/sw.js in sync when changing CSS/JS. */
+const ASSET_CACHE = "v9";
 const PREV_STORAGE_KEYS = ["shift-mobile-v3", "shift-mobile-v2"];
 const SLOT_MIN = 30;
 const MIN_TRACKS = 1;
@@ -144,6 +146,7 @@ const App = {
         swap: { a: null, b: null },
         picker: null,
         resolving: false,
+        didHScroll: false,
     },
 
     init() {
@@ -655,24 +658,23 @@ const App = {
         const start = this.startAbs();
         const count = this.slotCount();
         const slotW = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--slot-w"), 10) || 86;
-        const labelW = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--label-w"), 10) || 108;
         const trackW = Math.max(count * slotW, slotW);
-        const totalW = labelW + trackW;
         const now = this.nowDate();
         const nowMin = now.getHours() * 60 + now.getMinutes();
         const startMin = start * SLOT_MIN;
-        const nowPct = ((nowMin - startMin) / (count * SLOT_MIN)) * 100;
-        const times = this.absSlots().map((abs) => `<span class="tl-time">${slotToTime(abs)}</span>`).join("");
-
-        const nowLine = (nowPct >= 0 && nowPct <= 100)
-            ? `<div class="now-line" style="left:${nowPct}%"></div>`
+        const nowPx = ((nowMin - startMin) / SLOT_MIN) * slotW;
+        const hours = this.absSlots().map((abs) => (
+            `<span class="tl-hour" style="width:${slotW}px;flex:0 0 ${slotW}px">${slotToTime(abs)}</span>`
+        )).join("");
+        const nowLine = (nowPx >= 0 && nowPx <= trackW)
+            ? `<div class="now-line" style="left:${nowPx}px"></div>`
             : "";
-        const renderTrack = (job, compact) => {
+
+        const trackBlocks = (job) => {
             const demandBlocks = this.blocksForJob(job);
-            const onAxis = demandBlocks.length > 0;
             const blocks = demandBlocks.map((block) => {
-                const left = ((block.start - start) / count) * 100;
-                const w = ((block.end - block.start) / count) * 100;
+                const left = (block.start - start) * slotW;
+                const w = (block.end - block.start) * slotW;
                 const locked = block.slots.every((s) => this.isLocked(job.id, s));
                 const staff = this.staffById(block.staffId);
                 const cls = [
@@ -683,50 +685,50 @@ const App = {
                     staff && isNumericName(staff.name) ? "is-num" : "",
                 ].filter(Boolean).join(" ");
                 const style = block.staffId
-                    ? `left:${left}%;width:${w}%;background:${job.tint};color:${job.accent}`
-                    : `left:${left}%;width:${w}%`;
+                    ? `left:${left}px;width:${w}px;background:${job.tint};color:${job.accent}`
+                    : `left:${left}px;width:${w}px`;
                 const label = block.staffId
                     ? `<span>${staff ? staff.name : block.staffId}</span>`
                     : `<span class="gap-ico">👤</span><span>空缺</span>`;
                 return `<button type="button" class="${cls}" style="${style}" data-job="${job.id}" data-start="${block.start}" data-end="${block.end}">${label}</button>`;
             }).join("");
-            const emptyNote = !onAxis && job.ranges?.[0]
-                ? `<div class="tl-empty-note">需求由 ${job.ranges[0].start} 起，向右滑</div>`
+            const emptyNote = !demandBlocks.length && job.ranges?.[0]
+                ? `<div class="tl-empty-note">需求由 ${job.ranges[0].start} 起，左右滑</div>`
                 : "";
-            const title = compact ? `${job.track}` : job.name;
-            return `<div class="tl-row${compact ? " is-track" : ""}">
-                <div class="tl-label">
-                    <div class="tl-job-top">
-                        <span class="job-badge" style="background:${job.accent}">${compact ? job.track : job.categoryId === "arr" ? "到" : job.name.slice(0, 2)}</span>${title}
-                    </div>
-                    ${compact ? "" : `<div class="tl-job-sub">崗位需求：${job.demand}</div>`}
-                </div>
-                <div class="tl-track" style="width:${trackW}px">${nowLine}${blocks}${emptyNote}</div>
-            </div>`;
+            return `${blocks}${emptyNote}`;
         };
-        const rows = this.state.categories.map((cat) => {
+
+        const leftParts = [`<div class="tl-corner">崗位</div>`];
+        const rightParts = [`<div class="tl-hours">${hours}</div>`];
+        this.state.categories.forEach((cat) => {
             const tracks = this.state.jobs.filter((j) => j.categoryId === cat.id);
             const earliest = (cat.ranges || []).reduce((min, r) => (!min || r.start < min ? r.start : min), "");
-            const lateNote = earliest && earliest > this.state.scheduleStart ? ` · 由 ${earliest} 起，向右滑` : "";
-            const head = `<div class="tl-row tl-group-head">
-                <div class="tl-label">
-                    <div class="tl-job-top">
-                        <span class="job-badge" style="background:${cat.accent}">${cat.short}</span>${cat.name}
-                    </div>
-                    <div class="tl-job-sub">崗位需求：${cat.count}${lateNote}</div>
+            const lateNote = earliest && earliest > this.state.scheduleStart ? ` · 由 ${earliest} 起` : "";
+            leftParts.push(`<div class="tl-label is-group">
+                <div class="tl-job-top">
+                    <span class="job-badge" style="background:${cat.accent}">${cat.short}</span>${cat.name}
                 </div>
-                <div class="tl-track" style="width:${trackW}px">${nowLine}</div>
-            </div>`;
-            return `<div class="tl-group">${head}${tracks.map((job) => renderTrack(job, true)).join("")}</div>`;
-        }).join("");
+                <div class="tl-job-sub">崗位需求：${cat.count}${lateNote}</div>
+            </div>`);
+            rightParts.push(`<div class="tl-track is-group" style="width:${trackW}px;min-width:${trackW}px"></div>`);
+            tracks.forEach((job) => {
+                leftParts.push(`<div class="tl-label is-track">
+                    <div class="tl-job-top">
+                        <span class="job-badge" style="background:${job.accent}">${job.track}</span>${job.track}
+                    </div>
+                </div>`);
+                rightParts.push(`<div class="tl-track is-track" style="width:${trackW}px;min-width:${trackW}px">${trackBlocks(job)}</div>`);
+            });
+        });
 
-        $("timeline-root").innerHTML = `<div class="tl-scroll"><div class="tl" style="width:${totalW}px;min-width:${totalW}px">
-            <div class="tl-times">
-                <div class="tl-corner"></div>
-                <div class="tl-time-track" style="width:${trackW}px;grid-template-columns:repeat(${count},${slotW}px)">${times}</div>
+        $("timeline-root").innerHTML = `<div class="tl-board" style="--track-w:${trackW}px">
+            <div class="tl-left">${leftParts.join("")}</div>
+            <div class="tl-scroller" id="tl-scroller">
+                <div class="tl-right" id="tl-right" style="width:${trackW}px;min-width:${trackW}px">${nowLine}${rightParts.join("")}</div>
             </div>
-            ${rows}
-        </div></div>`;
+            <div class="tl-fade" id="tl-fade" aria-hidden="true"></div>
+            <p class="tl-scroll-hint" id="tl-scroll-hint">左右滑睇其他時間</p>
+        </div>`;
 
         $("timeline-root").querySelectorAll(".block").forEach((btn) => {
             btn.addEventListener("click", () => this.openSheet({
@@ -739,15 +741,48 @@ const App = {
     },
 
     bindTimelineScroll() {
-        const scroller = $("timeline-root");
+        const scroller = $("tl-scroller");
         const hint = $("tl-scroll-hint");
-        if (!scroller || !hint) return;
+        const fade = $("tl-fade");
+        if (!scroller) return;
         const update = () => {
-            const overflow = scroller.scrollWidth > scroller.clientWidth + 12;
-            hint.hidden = !overflow || scroller.scrollLeft > 28;
+            const overflow = scroller.scrollWidth > scroller.clientWidth + 8;
+            if (scroller.scrollLeft > 24) this.ui.didHScroll = true;
+            const hideCue = !overflow || this.ui.didHScroll;
+            if (hint) hint.hidden = hideCue;
+            if (fade) fade.hidden = hideCue;
         };
-        scroller.onscroll = update;
-        requestAnimationFrame(update);
+        scroller.addEventListener("scroll", update, { passive: true });
+
+        let startX = 0;
+        let startY = 0;
+        let startLeft = 0;
+        let axis = null;
+        scroller.addEventListener("touchstart", (e) => {
+            const t = e.touches[0];
+            startX = t.clientX;
+            startY = t.clientY;
+            startLeft = scroller.scrollLeft;
+            axis = null;
+        }, { passive: true });
+        scroller.addEventListener("touchmove", (e) => {
+            const t = e.touches[0];
+            if (!t) return;
+            const dx = t.clientX - startX;
+            const dy = t.clientY - startY;
+            if (axis == null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+                axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+            }
+            if (axis === "x") {
+                scroller.scrollLeft = startLeft - dx;
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        requestAnimationFrame(() => {
+            update();
+            scroller.dataset.trackW = String(scroller.scrollWidth);
+        });
     },
 
     openNowSheet() {
@@ -1204,7 +1239,7 @@ const App = {
             locked_assignments: asDraft ? [] : locked,
             unavailable: asDraft ? [] : unavailable,
             soften_workload_balance: true,
-            max_solve_seconds: Math.min(90, 20 + this.state.staff.length),
+            max_solve_seconds: Math.min(100, 28 + this.state.staff.length),
         };
         try {
             const res = await fetch("/schedule", {
@@ -1227,7 +1262,10 @@ const App = {
             if (!asDraft && this.allDemandPastLocked() && !this.hasAnyAssignment()) {
                 this.toast("示範時間太遲，可見時段全部已鎖，重算唔會填");
             } else {
-                this.toast(asDraft ? "草稿已由 OR-Tools 生成" : `重算完成：${report.status}，空缺 ${(report.unfilled_job_slots || []).length} 格`);
+                const n = (report.unfilled_job_slots || []).length;
+                this.toast(asDraft
+                    ? `草稿已由 OR-Tools 生成，剩餘空缺 ${n} 格`
+                    : `重算完成：${report.status}，剩餘空缺 ${n} 格`);
             }
         } catch (err) {
             this.toast(`重算失敗：${err.message}`);

@@ -154,6 +154,41 @@ class SchedulerMobileTests(unittest.TestCase):
             self.assertTrue(code in filled or code in unfilled, code)
         self.assertTrue({"KIOSK-A-1", "KIOSK-A-2"} & filled)
         self.assertTrue({"KIOSK-D-1", "KIOSK-D-2"} & filled)
+        # 6 concurrent tracks, 10 staff: fill-first should cover every demanded slot.
+        self.assertLessEqual(len(report["unfilled_job_slots"]), 2)
+
+    def test_fill_first_covers_arr_dep_kiosk_when_staff_ge_demand(self):
+        names = [str(i) for i in range(1, 11)]
+        jobs = [
+            "ARR-1 06:30–13:00",
+            "ARR-2 06:30–13:00",
+            "DEP-1 06:30–13:00",
+            "DEP-2 06:30–13:00",
+            "KIOSK-A-1 06:30–13:00",
+            "KIOSK-A-2 06:30–13:00",
+            "KIOSK-D-1 06:30–13:00",
+            "KIOSK-D-2 06:30–13:00",
+        ]
+        grid, report = make_scheduler(
+            employee_names=names,
+            K_employees=10,
+            schedule_period_str="06:30–13:00",
+            job_requirements_raw=jobs,
+            locked_assignments=[],
+            max_solve_seconds=35.0,
+        ).solve()
+        self.assertIn(report["status"], {"OPTIMAL", "FEASIBLE", "FEASIBLE_LOCKS_ONLY"})
+        demanded = 8 * 13  # 8 tracks × 13 half-hour slots
+        unfilled = report["unfilled_job_slots"]
+        self.assertLessEqual(len(unfilled), 4, unfilled[:8])
+        filled = {code for row in grid.values() for code in row if code and code != "R"}
+        for code in ("ARR-1", "DEP-1", "KIOSK-A-1", "KIOSK-A-2", "KIOSK-D-1", "KIOSK-D-2"):
+            self.assertIn(code, filled)
+        if len(unfilled) > 0:
+            self.assertIn(report.get("solve_level"), {"fill", "full", "relaxed", "locks"})
+        # Coverage should be close to demand when staff (10) > concurrent tracks (8).
+        assigned = sum(1 for row in grid.values() for code in row if code and code != "R")
+        self.assertGreaterEqual(assigned, demanded - 4)
 
     def test_time_helpers(self):
         self.assertEqual(time_to_slot("09:00"), 18)
