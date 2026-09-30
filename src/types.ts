@@ -86,6 +86,14 @@ export type PostClosure = {
   slots: { index: number; code: string }[];
 };
 
+/** Someone else covers a post after an early leave. */
+export type PostCover = {
+  shiftId: ShiftId;
+  rowId: string;
+  index: number;
+  code: string;
+};
+
 export type StaffLoan = {
   id: string;
   personId: string;
@@ -118,6 +126,7 @@ export type StaffingState = {
   books: Record<string, RosterRow[]>;
   loans: StaffLoan[];
   closures: PostClosure[];
+  covers?: PostCover[];
 };
 
 export type BoardState = {

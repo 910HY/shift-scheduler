@@ -7,6 +7,7 @@ import type {
   BoardState,
   OfficeId,
   Post,
+  PostCover,
   PostKind,
   RosterRow,
   RuleSettings,
@@ -566,6 +567,13 @@ export function applyEarlyLeave(
   if (person.cells.some((cell, index) => timeToMinutes(slots[index] ?? "00:00") >= timeToMinutes(input.at) && isLoanMarker(cell))) {
     return { ok: false, reason: "這個人這段已經借出，請先改借調。" };
   }
+  const planRows = officePlans(staffing).get(staffing.shiftId) ?? [];
+  const planPerson = planRows.find((row) => row.id === person.id);
+  const planVacated: { index: number; code: string }[] = [];
+  planPerson?.cells.forEach((cell, index) => {
+    if (timeToMinutes(slots[index] ?? "00:00") < timeToMinutes(input.at)) return;
+    if (cell && !isRestCode(cell) && !isGapCell(cell)) planVacated.push({ index, code: cell });
+  });
   const vacated: { index: number; code: string }[] = [];
   person.cells.forEach((cell, index) => {
     if (timeToMinutes(slots[index] ?? "00:00") < timeToMinutes(input.at)) return;
@@ -575,12 +583,18 @@ export function applyEarlyLeave(
   person.leaveEarlyAt = input.at;
   let note = `${person.code} 由 ${input.at} 早走。`;
   let closures = staffing.closures ?? [];
+  let covers = staffing.covers ?? [];
   if (input.strategy === "close") {
+    const closed = vacated.slice();
+    for (const item of planVacated) {
+      if (!closed.some((slot) => slot.index === item.index && slot.code === item.code)) closed.push(item);
+    }
     closures = [
       ...closures,
-      { id: `close-${person.id}-${input.at}`, officeId: staffing.officeId, shiftId: staffing.shiftId, slots: vacated },
+      { id: `close-${person.id}-${input.at}`, officeId: staffing.officeId, shiftId: staffing.shiftId, slots: closed },
     ];
-    note += vacated.length ? ` 已減開 ${[...new Set(vacated.map((item) => item.code))].join("、")}。` : " 這段沒有在崗格可減。";
+    const names = [...new Set(closed.map((item) => item.code))];
+    note += names.length ? ` 已減開 ${names.join("、")}。` : " 這段沒有在崗格可減。";
   }
   if (input.strategy === "fill") {
     const missed: string[] = [];
@@ -597,9 +611,24 @@ export function applyEarlyLeave(
       }
       filler.cells[item.index] = item.code;
     }
-    note += missed.length ? ` 未能補上 ${missed.join("、")}。` : " 其餘在休息的人已補上。";
+    const added: PostCover[] = [];
+    for (const item of planVacated) {
+      const filler = planRows.find((row) =>
+        row.id !== person.id
+        && !row.id.startsWith("loan:")
+        && row.cells[item.index] === "R"
+        && !row.leaveEarlyAt,
+      );
+      if (!filler) {
+        missed.push(`${slots[item.index]} ${item.code}`);
+        continue;
+      }
+      added.push({ shiftId: staffing.shiftId, rowId: filler.id, index: item.index, code: item.code });
+    }
+    covers = [...covers, ...added];
+    note += missed.length && added.length === 0 ? ` 未能補上 ${missed.join("、")}。` : " 其餘在休息的人已補上。";
   }
-  const next = { ...state, staffing: withBook({ ...staffing, closures }, staffing.officeId, staffing.shiftId, rows) };
+  const next = { ...state, staffing: { ...withBook({ ...staffing, closures, covers }, staffing.officeId, staffing.shiftId, rows), covers } };
   if (input.strategy !== "borrow") return { ok: true, state: next, note };
   if (!input.fromOffice || input.fromOffice === staffing.officeId) return { ok: false, reason: "請揀一個其他區借人。" };
   const donorBook = rowsFor(next.staffing!, input.fromOffice, staffing.shiftId);
@@ -1579,8 +1608,40 @@ function officePlans(staffing: StaffingState): Map<ShiftId, RosterRow[]> {
       });
     }
   }
+  dropClosedPosts(grouped, staffing);
   seatIncomingLoans(grouped, staffing, posts);
+  applyCovers(grouped, staffing.covers);
   return grouped;
+}
+
+function dropClosedPosts(grouped: Map<ShiftId, RosterRow[]>, staffing: StaffingState) {
+  for (const closure of staffing.closures ?? []) {
+    if (closure.officeId !== staffing.officeId) continue;
+    const native = slotStarts(closure.shiftId);
+    for (const slot of closure.slots) {
+      const when = native[slot.index];
+      if (!when) continue;
+      for (const [shiftId, rows] of grouped) {
+        const index = slotStarts(shiftId).indexOf(when);
+        if (index < 0) continue;
+        for (const row of rows) {
+          if ((row.cells[index] ?? "") === slot.code) row.cells[index] = "R";
+        }
+      }
+    }
+  }
+}
+
+function applyCovers(grouped: Map<ShiftId, RosterRow[]>, covers: PostCover[] | undefined) {
+  for (const cover of covers ?? []) {
+    const row = grouped.get(cover.shiftId)?.find((item) => item.id === cover.rowId);
+    if (!row) continue;
+    const current = row.cells[cover.index] ?? "";
+    if (current === EARLY_CELL || isLoanMarker(current)) continue;
+    const slot = slotStarts(cover.shiftId)[cover.index] ?? "";
+    releasePost(grouped, slot, cover.code, row.id);
+    row.cells[cover.index] = cover.code;
+  }
 }
 
 /** Put each borrowed person on a receiving post for the loan window, freeing a local holder when the pool is full. */

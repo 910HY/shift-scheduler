@@ -220,6 +220,64 @@ describe("early leave", () => {
   });
 });
 
+describe("early leave on the shared floor", () => {
+  function holderAt(state: BoardState) {
+    const shown = projectBoard(state);
+    return shown.staff.find((person) => person.shift === "B2" && person.dutyPost && !person.id.startsWith("loan:") && !person.id.startsWith("ov:"));
+  }
+
+  it("closes the post from that time and marks the person 早走", () => {
+    const demo = { ...createAppSeed(), now: "10:15" };
+    const before = projectBoard(demo);
+    const holder = holderAt(demo);
+    expect(holder?.dutyPost).toBeTruthy();
+    const result = applyEarlyLeave(demo, { personId: holder!.id, at: "10:00", strategy: "close" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const after = projectBoard({ ...result.state, now: "10:15" });
+    expect(after.posts.length).toBeLessThan(before.posts.length);
+    expect(after.posts.some((post) => post.name === holder!.dutyPost)).toBe(false);
+    expect(after.posts.some((post) => post.assigneeId === holder!.id)).toBe(false);
+    const left = after.staff.find((person) => person.id === holder!.id);
+    expect(left?.leaveEarlyAt).toBe("10:00");
+    expect(left?.dutyPost).toBeUndefined();
+    const sheet = combinedRoster(result.state.staffing!);
+    expect(sheet.rows.some((row) => row.code === `B2 ${holder!.code}` && row.cells.includes("早走"))).toBe(true);
+  });
+
+  it("lets someone else cover the former post", () => {
+    const demo = { ...createAppSeed(), now: "10:15" };
+    const holder = holderAt(demo);
+    expect(holder?.dutyPost).toBeTruthy();
+    const result = applyEarlyLeave(demo, { personId: holder!.id, at: "10:00", strategy: "fill" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const after = projectBoard({ ...result.state, now: "10:15" });
+    const post = after.posts.find((item) => item.name === holder!.dutyPost);
+    expect(post).toBeTruthy();
+    expect(post?.assigneeId).toBeTruthy();
+    expect(post?.assigneeId).not.toBe(holder!.id);
+    expect(after.staff.find((person) => person.id === holder!.id)?.dutyPost).toBeUndefined();
+    expect(combinedRoster(result.state.staffing!).rows.some((row) => row.cells.includes("早走"))).toBe(true);
+  });
+
+  it("borrows someone from Dep Hall to cover the early leave", () => {
+    const demo = { ...createAppSeed(), now: "10:15" };
+    const holder = holderAt(demo);
+    const result = applyEarlyLeave(demo, { personId: holder!.id, at: "10:00", strategy: "borrow", fromOffice: "dep-hall" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.state.staffing?.loans.length).toBeGreaterThan(0);
+    const arrived = projectBoard({ ...result.state, now: "10:15" });
+    expect(arrived.staff.some((person) => person.id.startsWith("loan:"))).toBe(true);
+    expect(arrived.staff.find((person) => person.id === holder!.id)?.dutyPost).toBeUndefined();
+    const home = projectBoard({ ...result.state, now: "10:15", staffing: { ...result.state.staffing!, officeId: "dep-hall" } });
+    const donor = result.state.staffing!.loans[0]!;
+    expect(home.staff.some((person) => person.code === donor.personCode && !person.id.startsWith("loan:"))).toBe(false);
+    expect(combinedRoster({ ...result.state.staffing!, officeId: "dep-hall" }).rows.some((row) => row.cells.includes("on loan to Arr Hall"))).toBe(true);
+  });
+});
+
 describe("loans", () => {
   it("loans two Arr Hall people to Dep Hall and changes both floors, the sheet and excel", async () => {
     const demo = { ...createAppSeed(), now: "10:15" };
