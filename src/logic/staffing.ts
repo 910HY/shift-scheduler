@@ -881,21 +881,10 @@ export function generateRoster(
     plan.push(cells);
   }
   const occupancy = slots.map(() => new Set<string>());
-  for (let person = 0; person < plan.length; person += 1) {
-    let previous = "";
-    let chunk: number[] = [];
-    const flush = () => {
-      if (!chunk.length) return;
-      assignChunk(plan[person] ?? [], chunk, previous, posts, occupancy, rules.stickyPost, rules.limitConsecutive ? Math.max(1, Math.round((rules.maxConsecutiveHours * 60) / SLOT_MINUTES)) : chunk.length);
-      const filled = chunk.map((index) => plan[person]?.[index] ?? "").find((value) => value && !isRestCode(value));
-      if (filled) previous = filled;
-      chunk = [];
-    };
-    plan[person]?.forEach((cell, index) => {
-      if (cell) flush();
-      else chunk.push(index);
-    });
-    flush();
+  if (rules.returnAfterRest) {
+    assignPeople(plan, posts, occupancy, true, rules.stickyPost);
+  } else {
+    assignAcrossSlots(plan, posts, occupancy, rules.stickyPost);
   }
   return plan.map((cells, index) => ({
     id: rowId(officeId, `K${index + 1}`),
@@ -905,35 +894,152 @@ export function generateRoster(
   }));
 }
 
+function assignPeople(
+  plan: string[][],
+  posts: string[],
+  occupancy: Set<string>[],
+  returnAfterRest: boolean,
+  sticky: boolean,
+) {
+  for (const cells of plan) {
+    let previous = "";
+    let chunk: number[] = [];
+    const counts = new Map<string, number>();
+    const flush = () => {
+      if (!chunk.length) return;
+      const afterRest = previous !== "";
+      let prefer = afterRest && returnAfterRest ? previous : "";
+      let avoid = afterRest && !returnAfterRest ? previous : "";
+      if (sticky) {
+        const whole = choosePost(chunk, prefer, posts, occupancy, { avoid, counts });
+        if (whole) {
+          for (const slot of chunk) {
+            cells[slot] = whole;
+            occupancy[slot]?.add(whole);
+            counts.set(whole, (counts.get(whole) ?? 0) + 1);
+          }
+          previous = whole;
+          chunk = [];
+          return;
+        }
+      }
+      for (const slot of chunk) {
+        const code = choosePost([slot], prefer, posts, occupancy, { avoid, counts });
+        if (!code) {
+          cells[slot] = "R";
+          continue;
+        }
+        cells[slot] = code;
+        occupancy[slot]?.add(code);
+        counts.set(code, (counts.get(code) ?? 0) + 1);
+        if (sticky) prefer = code;
+        else prefer = "";
+        avoid = "";
+      }
+      const worked = chunk.map((index) => cells[index] ?? "").filter((value) => value && !isRestCode(value));
+      const last = worked[worked.length - 1];
+      if (last) previous = last;
+      chunk = [];
+    };
+    cells.forEach((cell, index) => {
+      if (cell) flush();
+      else chunk.push(index);
+    });
+    flush();
+  }
+}
+
+function assignAcrossSlots(plan: string[][], posts: string[], occupancy: Set<string>[], sticky: boolean) {
+  const workers = plan.map(() => ({
+    previous: "",
+    current: "",
+    afterRest: false,
+    counts: new Map<string, number>(),
+  }));
+  const slotCount = plan[0]?.length ?? 0;
+  for (let slot = 0; slot < slotCount; slot += 1) {
+    const needing: number[] = [];
+    for (let person = 0; person < plan.length; person += 1) {
+      const worker = workers[person];
+      if (!worker) continue;
+      if (plan[person]?.[slot]) {
+        if (worker.current) worker.previous = worker.current;
+        worker.current = "";
+        worker.afterRest = worker.previous !== "";
+        continue;
+      }
+      needing.push(person);
+    }
+    const taken = occupancy[slot] ?? new Set<string>();
+    const give = (person: number, code: string) => {
+      const row = plan[person];
+      const worker = workers[person];
+      if (!row || !worker) return;
+      row[slot] = code;
+      taken.add(code);
+      worker.current = code;
+      worker.counts.set(code, (worker.counts.get(code) ?? 0) + 1);
+      worker.afterRest = false;
+    };
+    if (sticky) {
+      for (const person of needing) {
+        const worker = workers[person];
+        if (!worker?.current || taken.has(worker.current) || !posts.includes(worker.current)) continue;
+        give(person, worker.current);
+      }
+    }
+    for (const person of needing) {
+      if (plan[person]?.[slot]) continue;
+      const worker = workers[person];
+      if (!worker) continue;
+      const avoid = worker.afterRest ? worker.previous : "";
+      const code = choosePost([slot], "", posts, occupancy, { avoid, counts: worker.counts });
+      if (!code) {
+        const row = plan[person];
+        if (row) row[slot] = "R";
+        if (worker.current) worker.previous = worker.current;
+        worker.current = "";
+        worker.afterRest = worker.previous !== "";
+        continue;
+      }
+      give(person, code);
+    }
+  }
+}
+
 function sampleRows(officeId: OfficeId, shiftId: ShiftId, counters: number, apc: number, kiosks: number) {
   const staffing = createDefaultStaffing();
   const key = bookKey(officeId, shiftId, counters, apc, kiosks);
   return staffing.books[key];
 }
 
-function assignChunk(cells: string[], chunk: number[], previous: string, posts: string[], occupancy: Set<string>[], sticky: boolean, maxSlots: number) {
-  const groups: number[][] = [];
-  for (let index = 0; index < chunk.length; index += maxSlots) groups.push(chunk.slice(index, index + maxSlots));
-  let prefer = previous;
-  for (const group of groups) {
-    const choice = choosePost(group, prefer, posts, occupancy) ?? choosePost(group.slice(0, 1), prefer, posts, occupancy);
-    for (const slot of group) {
-      const code = sticky ? choice : choosePost([slot], prefer, posts, occupancy);
-      if (!code) {
-        cells[slot] = "R";
-        continue;
-      }
-      cells[slot] = code;
-      occupancy[slot]?.add(code);
-      prefer = code;
-    }
-  }
-}
-
-function choosePost(slots: number[], prefer: string, posts: string[], occupancy: Set<string>[]) {
+function choosePost(
+  slots: number[],
+  prefer: string,
+  posts: string[],
+  occupancy: Set<string>[],
+  options?: { avoid?: string; counts?: Map<string, number> },
+) {
   const free = (code: string) => slots.every((slot) => !occupancy[slot]?.has(code));
   if (prefer && posts.includes(prefer) && free(prefer)) return prefer;
-  return posts.find(free) ?? null;
+  const available = posts.filter(free);
+  if (!available.length) return null;
+  const avoid = options?.avoid ?? "";
+  const unlocked = avoid ? available.filter((code) => code !== avoid) : available;
+  const pool = unlocked.length ? unlocked : available;
+  const counts = options?.counts;
+  if (!counts) return pool[0] ?? null;
+  let best = pool[0] ?? null;
+  if (!best) return null;
+  let bestCount = counts.get(best) ?? 0;
+  for (const code of pool) {
+    const count = counts.get(code) ?? 0;
+    if (count < bestCount) {
+      best = code;
+      bestCount = count;
+    }
+  }
+  return best;
 }
 
 function pickRests(slotCount: number, turns: number, blocked: Set<number>, person: number, rests: Map<number, Set<number>>, posts: number) {
