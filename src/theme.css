@@ -850,15 +850,25 @@ select {
 .v10-body {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-columns: minmax(320px, 1fr) minmax(220px, 280px);
+  grid-template-areas: "board side";
   gap: 12px;
   padding: 12px;
-  align-items: start;
+  width: 100%;
+  min-width: 0;
+  min-height: 480px;
+  align-items: stretch;
 }
 
 .v10-body > main {
+  grid-area: board;
   min-width: 0;
-  min-height: 280px;
+  min-height: 480px;
+  background: var(--bg-canvas, #f4f5f7);
+}
+
+.v10-body > .v10-side {
+  grid-area: side;
 }
 
 .now-wrap {
@@ -867,10 +877,15 @@ select {
   gap: 16px;
 }
 
-.now-wrap h2 {
+.now-wrap h2,
+.floor-status {
   margin: 0;
   font-size: 15px;
   font-weight: 650;
+}
+
+.floor-status {
+  color: var(--ink-primary, #1a1d23);
 }
 
 .v10-side,
@@ -1094,7 +1109,12 @@ select {
     font-size: 22px;
   }
   .ops-crew strong { font-size: 32px; }
-  .v10-body { grid-template-columns: 1fr; padding: 8px; }
+  .v10-body {
+    grid-template-columns: 1fr;
+    grid-template-areas: "board";
+    padding: 8px;
+    min-height: 420px;
+  }
   .now-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .roster-scroll { max-height: 70svh; }
   .shift-picker-dialog {
