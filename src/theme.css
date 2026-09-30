@@ -997,6 +997,22 @@ select {
   padding: 16px;
 }
 
+.loan-people {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 40vh;
+  overflow: auto;
+  margin: 8px 0;
+}
+
+.loan-people label {
+  min-height: 44px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
 .plain-dialog label,
 .plain-dialog select,
 .plain-dialog input:not([type="checkbox"]):not([type="radio"]),
