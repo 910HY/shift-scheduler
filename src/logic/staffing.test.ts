@@ -221,6 +221,62 @@ describe("early leave", () => {
 });
 
 describe("loans", () => {
+  it("loans two Arr Hall people to Dep Hall and changes both floors, the sheet and excel", async () => {
+    const demo = { ...createAppSeed(), now: "10:15" };
+    const beforeArr = officeFocus(demo, "arr-hall")!;
+    const beforeDep = officeFocus(demo, "dep-hall")!;
+    const first = createLoan(demo, { personId: "arr-hall:K1", toOffice: "dep-hall", start: "10:00", end: null });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const second = createLoan(first.state, { personId: "arr-hall:K2", toOffice: "dep-hall", start: "10:00", end: null });
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    const loaned = { ...second.state, now: "10:15" };
+    const source = projectBoard({ ...loaned, staffing: { ...loaned.staffing!, officeId: "arr-hall" } });
+    const target = projectBoard({ ...loaned, staffing: { ...loaned.staffing!, officeId: "dep-hall" } });
+    expect(source.staff.some((person) => person.code === "K1" || person.code === "K2")).toBe(false);
+    expect(source.posts.some((post) => post.assigneeId === "arr-hall:K1" || post.assigneeId === "arr-hall:K2")).toBe(false);
+    const arrivals = target.staff.filter((person) => person.id.startsWith("loan:") && (person.code === "K1" || person.code === "K2"));
+    expect(arrivals).toHaveLength(2);
+    const dutyPosts = arrivals.map((person) => person.dutyPost);
+    expect(dutyPosts.every((post) => Boolean(post))).toBe(true);
+    expect(new Set(dutyPosts).size).toBe(2);
+    for (const person of arrivals) {
+      const holders = target.posts.filter((post) => post.name === person.dutyPost);
+      expect(holders).toHaveLength(1);
+      expect(holders[0]?.assigneeId).toBe(person.id);
+    }
+    const sourceFocus = officeFocus(loaned, "arr-hall")!;
+    const targetFocus = officeFocus(loaned, "dep-hall")!;
+    expect(sourceFocus.onSite).toBeLessThan(beforeArr.onSite);
+    expect(targetFocus.onSite).toBeGreaterThan(beforeDep.onSite);
+    expect(target.posts.filter((post) => post.assigneeId?.startsWith("loan:")).length).toBe(2);
+    const sheet = combinedRoster({ ...loaned.staffing!, officeId: "arr-hall" });
+    expect(sheet.rows.some((row) => row.code === "B2 K1" && row.cells.some((cell) => cell === "on loan to Dep Hall"))).toBe(true);
+    expect(sheet.rows.some((row) => row.code === "B2 K2" && row.cells.some((cell) => cell === "on loan to Dep Hall"))).toBe(true);
+    const depSheet = combinedRoster({ ...loaned.staffing!, officeId: "dep-hall" });
+    expect(depSheet.rows.filter((row) => row.id.includes("loan:") && (row.code === "B2 K1" || row.code === "B2 K2"))).toHaveLength(2);
+    const buffer = await buildPreviewWorkbook({ ...loaned.staffing!, officeId: "arr-hall" });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as ExcelJS.Buffer);
+    const values = new Set<string>();
+    workbook.getWorksheet("preview")?.eachRow((row) => row.eachCell((cell) => values.add(String(cell.value ?? ""))));
+    expect(values.has("on loan to Dep Hall")).toBe(true);
+    const depBook = await buildPreviewWorkbook({ ...loaned.staffing!, officeId: "dep-hall" });
+    const depWorkbook = new ExcelJS.Workbook();
+    await depWorkbook.xlsx.load(depBook as ExcelJS.Buffer);
+    const depValues = new Set<string>();
+    depWorkbook.getWorksheet("preview")?.eachRow((row) => row.eachCell((cell) => depValues.add(String(cell.value ?? ""))));
+    expect(depValues.has("K1") || [...depValues].some((value) => value.includes("K1"))).toBe(true);
+    const ended = setLoanEnd(loaned, loaned.staffing!.loans[0]!.id, "11:00");
+    expect(ended.staffing?.loans[0]?.end).toBe("11:00");
+    const restored = revokeLoan(revokeLoan(ended, ended.staffing!.loans[0]!.id), ended.staffing!.loans[1]!.id);
+    expect(restored.staffing?.loans).toHaveLength(0);
+    const back = projectBoard({ ...restored, now: "10:15", staffing: { ...restored.staffing!, officeId: "arr-hall" } });
+    expect(back.staff.some((person) => person.code === "K1")).toBe(true);
+    expect(back.staff.some((person) => person.code === "K2")).toBe(true);
+  });
+
   it("moves two people from Dep Hall onto Arr Hall from 10:00 until the shift ends", () => {
     const base = board();
     const dep = { ...base, staffing: { ...base.staffing!, officeId: "dep-hall" as const } };

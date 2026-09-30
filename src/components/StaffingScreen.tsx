@@ -518,14 +518,21 @@ export function StaffingScreen() {
           currentOffice={staffing.officeId}
           onClose={() => setLoanOpen(false)}
           onSubmit={(input) => {
-            const result = createLoan(state, input);
-            if (!result.ok) {
-              say(result.reason);
-              return;
+            let next = state;
+            const sent: string[] = [];
+            for (const personId of input.personIds) {
+              const result = createLoan(next, { personId, toOffice: input.toOffice, start: input.start, end: input.end });
+              if (!result.ok) {
+                say(result.reason);
+                return;
+              }
+              next = result.state;
+              const code = input.rows.find((row) => row.id === personId)?.code ?? personId;
+              sent.push(code);
             }
-            board.replace(result.state);
+            board.replace(next);
             setLoanOpen(false);
-            say(`${input.personId} 已借去 ${officeLabel(input.toOffice)}。`);
+            say(`已借 ${sent.join("、")} 去 ${officeLabel(input.toOffice)}。`);
           }}
         />
       )}
@@ -673,7 +680,11 @@ function NowFloor({
           <h2>不在本區崗</h2>
           <div className="chip-row">
             {away.map((person) => <span key={person.id} className="person-chip is-away">{person.code} 早走</span>)}
-            {outgoing.map((row) => <span key={row.id} className="person-chip is-loan">{row.code} {row.cells[slotAt]}</span>)}
+            {outgoing.map((row) => (
+              <span key={row.id} className="person-chip is-loan" data-testid="loaned-out" title={row.cells[slotAt]}>
+                {row.code} 借出
+              </span>
+            ))}
           </div>
         </section>
       )}
@@ -917,27 +928,41 @@ function LoanDialog({
   rows: RosterRow[];
   currentOffice: OfficeId;
   onClose: () => void;
-  onSubmit: (input: { personId: string; toOffice: OfficeId; start: string; end: string | null }) => void;
+  onSubmit: (input: { personIds: string[]; toOffice: OfficeId; start: string; end: string | null; rows: RosterRow[] }) => void;
 }) {
-  const [personId, setPersonId] = useState(rows[0]?.id ?? "");
+  const people = rows.filter((row) => !row.id.startsWith("loan:"));
+  const [personIds, setPersonIds] = useState<string[]>([]);
   const [toOffice, setToOffice] = useState<OfficeId>(OFFICES.find((office) => office.id !== currentOffice)?.id ?? "dep-hall");
   const [start, setStart] = useState("10:00");
   const [untilEnd, setUntilEnd] = useState(true);
   const [end, setEnd] = useState("12:00");
+  function togglePerson(id: string) {
+    setPersonIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
   return (
     <dialog className="plain-dialog" open data-testid="loan-dialog">
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          onSubmit({ personId, toOffice, start, end: untilEnd ? null : end });
+          if (!personIds.length) return;
+          onSubmit({ personIds, toOffice, start, end: untilEnd ? null : end, rows: people });
         }}
       >
         <h2>借出員工</h2>
-        <label>員工
-          <select aria-label="借出員工" value={personId} onChange={(event) => setPersonId(event.target.value)}>
-            {rows.filter((row) => !row.id.startsWith("loan:")).map((row) => <option key={row.id} value={row.id}>{row.code}</option>)}
-          </select>
-        </label>
+        <p className="pref-hint">可一次借兩個人。由開始時刻起，借出區唔再佔崗。</p>
+        <div className="loan-people" role="group" aria-label="借出員工">
+          {people.map((row) => (
+            <label key={row.id} className="check-row">
+              <input
+                type="checkbox"
+                data-testid={`loan-person-${row.code}`}
+                checked={personIds.includes(row.id)}
+                onChange={() => togglePerson(row.id)}
+              />
+              {row.code}
+            </label>
+          ))}
+        </div>
         <label>借入區
           <select aria-label="借入區" value={toOffice} onChange={(event) => setToOffice(event.target.value as OfficeId)}>
             {OFFICES.filter((office) => office.id !== currentOffice).map((office) => <option key={office.id} value={office.id}>{office.label}</option>)}
@@ -947,7 +972,7 @@ function LoanDialog({
         <label className="check-row"><input type="checkbox" checked={untilEnd} onChange={(event) => setUntilEnd(event.target.checked)} />直到收工</label>
         {!untilEnd && <label>到<input aria-label="借完時刻" type="time" value={end} onChange={(event) => setEnd(event.target.value)} /></label>}
         <div className="quick-row">
-          <Button type="submit">確認借調</Button>
+          <Button type="submit" data-testid="loan-confirm" disabled={!personIds.length}>確認借調{personIds.length ? `（${personIds.length}）` : ""}</Button>
           <Button type="button" variant="outline" onClick={onClose}>取消</Button>
         </div>
       </form>

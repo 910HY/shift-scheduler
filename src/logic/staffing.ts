@@ -819,7 +819,7 @@ export function projectBoard(state: BoardState): BoardState {
     assigneeId: null,
   }));
   const staff: Staff[] = [];
-  const plans = officePlans(staffing, "stored");
+  const plans = officePlans(staffing);
   for (const shiftId of ordered) {
     const shift = shiftOf(shiftId);
     const slots = slotStarts(shiftId);
@@ -915,7 +915,7 @@ export type OverlapRoster = {
 };
 
 /** Anchor shift plus every shift whose window overlaps it, aligned on one timeline. */
-export function combinedRoster(staffing: StaffingState, source: "stored" | "preview" = "stored"): OverlapRoster {
+export function combinedRoster(staffing: StaffingState, _source: "stored" | "preview" = "stored"): OverlapRoster {
   const shifts = shiftsOverlapping(staffing.shiftId);
   const anchorStart = timeToMinutes(shiftOf(staffing.shiftId).start);
   const latestEnd = Math.max(...shifts.map((id) => timeToMinutes(shiftOf(id).end)));
@@ -930,7 +930,7 @@ export function combinedRoster(staffing: StaffingState, source: "stored" | "prev
   }
   const slots = [...slotSet].sort((left, right) => timeToMinutes(left) - timeToMinutes(right));
   const rows: RosterRow[] = [];
-  const plans = officePlans(staffing, source);
+  const plans = officePlans(staffing);
   for (const shiftId of shifts) {
     const nativeSlots = slotStarts(shiftId);
     for (const row of plans.get(shiftId) ?? []) {
@@ -1527,7 +1527,7 @@ function coverSharedPlans(staffing: StaffingState, posts: string[]) {
 }
 
 /** One post pool for the office. Overlapping shifts share it; a post is never doubled. */
-function officePlans(staffing: StaffingState, source: "stored" | "preview"): Map<ShiftId, RosterRow[]> {
+function officePlans(staffing: StaffingState): Map<ShiftId, RosterRow[]> {
   const posts = openPostCodes(staffing.officeId, staffing);
   const sized = coverSharedPlans(staffing, posts);
   const workers: SharedWorker[] = [];
@@ -1562,11 +1562,9 @@ function officePlans(staffing: StaffingState, source: "stored" | "preview"): Map
       cells: worker.cells,
     });
   }
-  if (source === "stored") {
-    for (const shift of SHIFTS) {
-      const key = bookKey(staffing.officeId, shift.id, staffing.counters, staffing.apc, staffing.kiosks);
-      overlayDutyEdits(grouped.get(shift.id) ?? [], staffing.books[key]);
-    }
+  for (const shift of SHIFTS) {
+    const key = bookKey(staffing.officeId, shift.id, staffing.counters, staffing.apc, staffing.kiosks);
+    overlayDutyEdits(grouped.get(shift.id) ?? [], staffing.books[key]);
   }
   for (const shift of SHIFTS) {
     const rows = grouped.get(shift.id);
@@ -1581,7 +1579,67 @@ function officePlans(staffing: StaffingState, source: "stored" | "preview"): Map
       });
     }
   }
+  seatIncomingLoans(grouped, staffing, posts);
   return grouped;
+}
+
+/** Put each borrowed person on a receiving post for the loan window, freeing a local holder when the pool is full. */
+function seatIncomingLoans(grouped: Map<ShiftId, RosterRow[]>, staffing: StaffingState, posts: string[]) {
+  for (const loan of staffing.loans) {
+    if (loan.toOffice !== staffing.officeId) continue;
+    const row = grouped.get(loan.shiftId)?.find((item) => item.id === `loan:${loan.id}`);
+    if (!row) continue;
+    const slots = slotStarts(loan.shiftId);
+    for (let index = 0; index < row.cells.length; index += 1) {
+      const cell = row.cells[index] ?? "";
+      if (!cell || isLoanMarker(cell) || cell === EARLY_CELL) continue;
+      const slot = slots[index] ?? "";
+      if (!isRestCode(cell)) {
+        releasePost(grouped, slot, cell, row.id);
+        continue;
+      }
+      const claimed = claimPost(grouped, slot, posts, row.id);
+      if (claimed) row.cells[index] = claimed;
+    }
+  }
+}
+
+function releasePost(grouped: Map<ShiftId, RosterRow[]>, slot: string, code: string, exceptId: string) {
+  for (const [shiftId, rows] of grouped) {
+    const index = slotStarts(shiftId).indexOf(slot);
+    if (index < 0) continue;
+    for (const row of rows) {
+      if (row.id === exceptId) continue;
+      if ((row.cells[index] ?? "") === code) row.cells[index] = "R";
+    }
+  }
+}
+
+function claimPost(grouped: Map<ShiftId, RosterRow[]>, slot: string, posts: string[], exceptId: string) {
+  const used = new Set<string>();
+  for (const [shiftId, rows] of grouped) {
+    const index = slotStarts(shiftId).indexOf(slot);
+    if (index < 0) continue;
+    for (const row of rows) {
+      if (row.id === exceptId) continue;
+      const cell = row.cells[index] ?? "";
+      if (cell && !isRestCode(cell) && !isLoanMarker(cell) && cell !== EARLY_CELL) used.add(cell);
+    }
+  }
+  const free = posts.find((code) => !used.has(code));
+  if (free) return free;
+  for (const [shiftId, rows] of grouped) {
+    const index = slotStarts(shiftId).indexOf(slot);
+    if (index < 0) continue;
+    for (const row of rows) {
+      if (row.id === exceptId || row.id.startsWith("loan:")) continue;
+      const cell = row.cells[index] ?? "";
+      if (!cell || isRestCode(cell) || isLoanMarker(cell) || cell === EARLY_CELL) continue;
+      row.cells[index] = "R";
+      return cell;
+    }
+  }
+  return null;
 }
 
 function overlayDutyEdits(rows: RosterRow[], stored: RosterRow[] | undefined) {
