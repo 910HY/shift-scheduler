@@ -1,1 +1,1 @@
-web: gunicorn --workers 1 --timeout 120 main:app
+web: sh scripts/start-prod.sh
