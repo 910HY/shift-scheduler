@@ -249,6 +249,29 @@ export function simultaneousPosts(officeId: OfficeId, staffing: StaffingState) {
   return openPostCodes(officeId, staffing).length;
 }
 
+/** True when a filled cell is a post kind this person is not allowed to work. */
+export function breaksPreference(allows: PostKind[], cell: string, respect = true) {
+  if (!respect || allows.length === 0) return false;
+  const kind = postKind(cell);
+  return Boolean(kind && !allows.includes(kind));
+}
+
+export function preferenceViolations(rows: RosterRow[], respect: boolean): RuleIssue[] {
+  if (!respect) return [];
+  const issues: RuleIssue[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    for (const cell of row.cells) {
+      if (!breaksPreference(row.allows, cell, true)) continue;
+      const message = `${row.code} 不可派去 ${cell}。`;
+      if (seen.has(message)) continue;
+      seen.add(message);
+      issues.push({ level: "error", rule: "喜好", message });
+    }
+  }
+  return issues;
+}
+
 export function postKind(code: string): PostKind | null {
   if (/^Apc \d+$/.test(code)) return "apc";
   if (/^A\d+$/.test(code)) return "kiosk";
@@ -1029,7 +1052,11 @@ export function reflowOffice(state: BoardState): { ok: true; state: BoardState }
   );
   if (blocked) return { ok: false, reason: "這一頁有借調，請先撤銷再重排。" };
   const useSample = !isExtreme(staffing.rules, staffing.shiftId);
-  const rows = generateRoster(staffing.officeId, staffing.shiftId, staffing, useSample);
+  const kept = new Map(activeRows(staffing).map((row) => [row.id, row.allows]));
+  const rows = generateRoster(staffing.officeId, staffing.shiftId, staffing, useSample).map((row) => ({
+    ...row,
+    allows: kept.get(row.id)?.slice() ?? row.allows,
+  }));
   return { ok: true, state: { ...state, staffing: withBook(staffing, staffing.officeId, staffing.shiftId, rows) } };
 }
 
@@ -1271,6 +1298,7 @@ type SharedWorker = {
   current: string;
   afterRest: boolean;
   counts: Map<string, number>;
+  allows: PostKind[];
 };
 
 type Seat = { post: string; start: number; end: number };
@@ -1387,6 +1415,7 @@ function trialWorkers(staffing: StaffingState, plans: Map<ShiftId, string[][]>) 
         current: "",
         afterRest: false,
         counts: new Map(),
+        allows: [],
       });
     }
   }
@@ -1561,10 +1590,13 @@ function officePlans(staffing: StaffingState): Map<ShiftId, RosterRow[]> {
   const posts = openPostCodes(staffing.officeId, staffing);
   const sized = coverSharedPlans(staffing, posts);
   const workers: SharedWorker[] = [];
+  const allowedByShift = new Map<ShiftId, number>();
   for (const shift of SHIFTS) {
     const rules = rulesForShift(staffing, shift.id);
     const slots = memoSlots(shift.id);
     for (const cells of sized.get(shift.id) ?? []) {
+      const count = (allowedByShift.get(shift.id) ?? 0) + 1;
+      allowedByShift.set(shift.id, count);
       workers.push({
         shiftId: shift.id,
         rules,
@@ -1574,6 +1606,7 @@ function officePlans(staffing: StaffingState): Map<ShiftId, RosterRow[]> {
         current: "",
         afterRest: false,
         counts: new Map(),
+        allows: storedAllows(staffing, shift.id, `K${count}`),
       });
     }
   }
@@ -1749,7 +1782,8 @@ function assignShared(workers: SharedWorker[], posts: string[]) {
     }
     for (const job of needing) {
       const worker = job.worker;
-      if (!worker.rules.stickyPost || !worker.current || taken.has(worker.current) || !posts.includes(worker.current)) continue;
+      const allowed = postsForWorker(worker, posts);
+      if (!worker.rules.stickyPost || !worker.current || taken.has(worker.current) || !allowed.includes(worker.current)) continue;
       giveShared(worker, job.index, worker.current, taken, seats, start, end);
       holding.set(worker.shiftId, (holding.get(worker.shiftId) ?? 0) + 1);
     }
@@ -1781,9 +1815,10 @@ function assignShared(workers: SharedWorker[], posts: string[]) {
       if (!job) break;
       cursor = (order.indexOf(bestShift) + 1) % order.length;
       const worker = job.worker;
+      const allowed = postsForWorker(worker, posts);
       const avoid = !worker.rules.returnAfterRest && worker.afterRest ? worker.previous : "";
       const prefer = worker.rules.returnAfterRest && worker.afterRest ? worker.previous : "";
-      const code = choosePost([0], prefer, posts, [taken], { avoid, counts: worker.counts });
+      const code = choosePost([0], allowed.includes(prefer) ? prefer : "", allowed, [taken], { avoid, counts: worker.counts });
       if (!code) {
         worker.cells[job.index] = "R";
         if (worker.current) worker.previous = worker.current;
@@ -1795,6 +1830,17 @@ function assignShared(workers: SharedWorker[], posts: string[]) {
       holding.set(worker.shiftId, (holding.get(worker.shiftId) ?? 0) + 1);
     }
   }
+}
+
+function storedAllows(staffing: StaffingState, shiftId: ShiftId, code: string): PostKind[] {
+  if (!rulesForShift(staffing, shiftId).respectPreference) return [];
+  const key = bookKey(staffing.officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+  return staffing.books[key]?.find((row) => row.code === code)?.allows.slice() ?? [];
+}
+
+function postsForWorker(worker: SharedWorker, posts: string[]) {
+  if (!worker.rules.respectPreference || worker.allows.length === 0) return posts;
+  return posts.filter((code) => allowsCode(worker.allows, code));
 }
 
 function giveShared(

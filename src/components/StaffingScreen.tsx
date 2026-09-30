@@ -13,6 +13,7 @@ import {
   apcPosts,
   applyEarlyLeave,
   bookKey,
+  breaksPreference,
   checkRoster,
   combinedRoster,
   createLoan,
@@ -28,6 +29,7 @@ import {
   offClockWarning,
   openPostCodes,
   parseOverlapRowId,
+  preferenceViolations,
   previewFilename,
   previewRows,
   projectBoard,
@@ -94,7 +96,10 @@ export function StaffingScreen() {
   const checkState = previewBook
     ? { ...staffing, books: { ...staffing.books, [bookKey(staffing.officeId, staffing.shiftId, staffing.counters, staffing.apc, staffing.kiosks)]: previewBook } }
     : staffing;
-  const issues = checkRoster(checkState).filter((issue) => issue.level === "error");
+  const issues = [
+    ...checkRoster(checkState).filter((issue) => issue.level === "error" && issue.rule !== "喜好"),
+    ...preferenceViolations(rows, staffing.rules.respectPreference),
+  ];
   const crew = crewFor(staffing);
   const advice = shortageAdvice(staffing, state.now);
   const offClock = offClockWarning(state.now, staffing.shiftId);
@@ -444,9 +449,9 @@ export function StaffingScreen() {
               onPlace={place}
             />
           ) : narrow ? (
-            <StaffCards rows={rows} slots={slots} issues={issues.map((issue) => issue.message)} onEdit={openEditor} onSelect={setSelectedId} selectedId={selectedId} />
+            <StaffCards rows={rows} slots={slots} issues={issues.map((issue) => issue.message)} respectPreference={staffing.rules.respectPreference} onEdit={openEditor} onSelect={setSelectedId} selectedId={selectedId} />
           ) : (
-            <RosterTable rows={rows} slots={slots} issues={issues.map((issue) => issue.message)} onEdit={openEditor} onSelect={setSelectedId} selectedId={selectedId} />
+            <RosterTable rows={rows} slots={slots} issues={issues.map((issue) => issue.message)} respectPreference={staffing.rules.respectPreference} onEdit={openEditor} onSelect={setSelectedId} selectedId={selectedId} />
           )}
         </main>
         {!narrow && <aside className="v10-side">{settings}</aside>}
@@ -701,6 +706,7 @@ function RosterTable({
   rows,
   slots,
   issues,
+  respectPreference,
   selectedId,
   onSelect,
   onEdit,
@@ -708,6 +714,7 @@ function RosterTable({
   rows: RosterRow[];
   slots: string[];
   issues: string[];
+  respectPreference: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onEdit: (rowId: string, index: number, value: string) => void;
@@ -729,11 +736,12 @@ function RosterTable({
                   {issues.some((issue) => mentionsCode(row.code, issue)) && <span className="dot" />}
                   {row.id.startsWith("loan:") && <span className="loan-in">借</span>}
                   {row.code}
+                  {row.allows.length > 0 && <span className="pref-tag">{row.allows.map((kind) => KINDS.find((item) => item.id === kind)?.label ?? kind).join("、")}</span>}
                 </button>
               </th>
               {row.cells.map((cell, index) => (
                 <td key={`${row.id}-${slots[index]}`}>
-                  <button type="button" className={cellTone(cell)} onClick={() => onEdit(row.id, index, cell)}>
+                  <button type="button" className={cellClass(row, cell, respectPreference)} onClick={() => onEdit(row.id, index, cell)}>
                     {cell || "—"}
                   </button>
                 </td>
@@ -750,6 +758,7 @@ function StaffCards({
   rows,
   slots,
   issues,
+  respectPreference,
   selectedId,
   onSelect,
   onEdit,
@@ -757,6 +766,7 @@ function StaffCards({
   rows: RosterRow[];
   slots: string[];
   issues: string[];
+  respectPreference: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onEdit: (rowId: string, index: number, value: string) => void;
@@ -772,13 +782,14 @@ function StaffCards({
                 {problem && <span className="dot" />}
                 {row.id.startsWith("loan:") && <span className="loan-in">借</span>}
                 <strong>{row.code}</strong>
+                {row.allows.length > 0 && <span className="pref-tag">{row.allows.map((kind) => KINDS.find((item) => item.id === kind)?.label ?? kind).join("、")}</span>}
               </button>
               {row.cells.some((cell) => isLoanMarker(cell)) && <span className="loan-out">on loan</span>}
             </header>
             {problem && <p className="person-issue">{problem}</p>}
             <div className="timeline">
               {slots.map((slot, index) => (
-                <button key={slot} type="button" className={cellTone(row.cells[index] ?? "")} onClick={() => onEdit(row.id, index, row.cells[index] ?? "")}>
+                <button key={slot} type="button" className={cellClass(row, row.cells[index] ?? "", respectPreference)} onClick={() => onEdit(row.id, index, row.cells[index] ?? "")}>
                   <small>{slot}</small>
                   <b>{row.cells[index] || "—"}</b>
                 </button>
@@ -913,9 +924,9 @@ function PreferenceChips({ allows, onChange }: { allows: PostKind[]; onChange: (
   }
   return (
     <div className="quick-row" data-testid="preference-chips">
-      <button type="button" className={!allows.length ? "is-on" : ""} onClick={() => onChange([])}>不限</button>
+      <button type="button" data-testid="pref-any" className={!allows.length ? "is-on" : ""} onClick={() => onChange([])}>不限</button>
       {KINDS.map((kind) => (
-        <button key={kind.id} type="button" className={allows.includes(kind.id) ? "is-on" : ""} onClick={() => toggle(kind.id)}>
+        <button key={kind.id} type="button" data-testid={`pref-${kind.id}`} className={allows.includes(kind.id) ? "is-on" : ""} onClick={() => toggle(kind.id)}>
           {kind.label}
         </button>
       ))}
@@ -1063,6 +1074,11 @@ function editableRow(row: RosterRow | null, shiftId: ShiftId): RosterRow | null 
   const parsed = parseOverlapRowId(row.id);
   if (!parsed || parsed.shiftId !== shiftId || parsed.rowId.startsWith("loan:")) return null;
   return { ...row, id: parsed.rowId };
+}
+
+function cellClass(row: RosterRow, value: string, respectPreference: boolean) {
+  const tone = cellTone(value);
+  return breaksPreference(row.allows, value, respectPreference) ? `${tone} is-pref` : tone;
 }
 
 function cellTone(value: string) {

@@ -959,6 +959,8 @@ select {
 .cell.is-apc { background: #9dc3e6; }
 .cell.is-loan,
 .cell.is-early { background: #e7e9ee; color: #5c6370; }
+.cell.is-pref { outline: 2px solid #B5473A; outline-offset: -2px; }
+.pref-tag { margin-left: 6px; font-size: 11px; font-weight: 600; color: #3B6FD8; }
 
 .staff-cards { display: flex; flex-direction: column; gap: 10px; }
 .staff-cards article { background: #fff; border-radius: 12px; padding: 10px; border: 1px solid #e7e9ee; }
