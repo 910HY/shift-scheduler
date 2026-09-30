@@ -21,9 +21,12 @@ import {
   officeFocus,
   offClockWarning,
   openPostCodes,
+  postKind,
+  preferenceViolations,
   previewFilename,
   projectBoard,
   setCell,
+  setRowAllows,
   setShift,
   shiftsActiveAt,
   shortageAdvice,
@@ -32,6 +35,7 @@ import {
   revokeLoan,
   scaleCount,
   setLoanEnd,
+  setOffice,
   setOpenCounts,
   setPercent,
   setRules,
@@ -164,6 +168,51 @@ describe("sample rosters", () => {
     const rows = staffing.books[key]!.map((row) => (row.id === target!.id ? { ...row, allows: ["counter" as const] } : row));
     const issues = checkRoster({ ...staffing, books: { ...staffing.books, [key]: rows }, rules: { ...staffing.rules, respectPreference: true } });
     expect(issues.some((issue) => issue.rule === "喜好")).toBe(true);
+  });
+});
+
+describe("job preferences on the shared roster", () => {
+  function dutyCells(cells: string[]) {
+    return cells.filter((cell) => cell && !isRestCode(cell) && cell !== "早走" && !cell.startsWith("on loan"));
+  }
+
+  it("puts a counter-only person off APC and an APC-only person off counters", () => {
+    const demo = createAppSeed();
+    const limited = setRowAllows(setRowAllows(demo, "arr-hall:K1", ["counter"]), "arr-hall:K2", ["apc"]);
+    const sheet = combinedRoster(limited.staffing!);
+    const first = sheet.rows.find((row) => row.code === "B2 K1");
+    const second = sheet.rows.find((row) => row.code === "B2 K2");
+    expect(first?.allows).toEqual(["counter"]);
+    expect(second?.allows).toEqual(["apc"]);
+    const firstPosts = dutyCells(first?.cells ?? []);
+    const secondPosts = dutyCells(second?.cells ?? []);
+    expect(firstPosts.length).toBeGreaterThan(0);
+    expect(secondPosts.length).toBeGreaterThan(0);
+    expect(firstPosts.every((cell) => postKind(cell) === "counter")).toBe(true);
+    expect(secondPosts.every((cell) => postKind(cell) === "apc")).toBe(true);
+    const floor = projectBoard({ ...limited, now: "10:15" });
+    const onCounter = floor.staff.find((person) => person.code === "K1" && person.shift === "B2");
+    const onApc = floor.staff.find((person) => person.code === "K2" && person.shift === "B2");
+    if (onCounter?.dutyPost) expect(postKind(onCounter.dutyPost)).toBe("counter");
+    if (onApc?.dutyPost) expect(postKind(onApc.dutyPost)).toBe("apc");
+    expect(preferenceViolations(sheet.rows.filter((row) => row.code === "B2 K1" || row.code === "B2 K2"), true)).toEqual([]);
+  });
+
+  it("does not place a counter-only person on kiosk posts", () => {
+    const limited = setRowAllows(setOffice(createAppSeed(), "arr-kiosk"), "arr-kiosk:K1", ["counter"]);
+    const row = combinedRoster(limited.staffing!).rows.find((item) => item.code === "B2 K1");
+    const posts = dutyCells(row?.cells ?? []);
+    expect(posts.some((cell) => postKind(cell) === "kiosk")).toBe(false);
+    expect(preferenceViolations([row!], true)).toEqual([]);
+  });
+
+  it("ignores saved preferences when the switch is off", () => {
+    const demo = createAppSeed();
+    const baseline = combinedRoster(demo.staffing!).rows.find((row) => row.code === "B2 K1")?.cells;
+    const saved = setRowAllows(demo, "arr-hall:K1", ["apc"]);
+    const ignored = setRules(saved, { ...saved.staffing!.rules, respectPreference: false });
+    const cells = combinedRoster(ignored.staffing!).rows.find((row) => row.code === "B2 K1")?.cells;
+    expect(cells).toEqual(baseline);
   });
 });
 
