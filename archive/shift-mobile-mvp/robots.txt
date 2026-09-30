@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://shift-scheduler-9ct4.onrender.com/sitemap.xml 

@@ -1,0 +1,1067 @@
+import hallCsv from "@/logic/fixtures/b2-arr-hall.csv?raw";
+import kioskCsv from "@/logic/fixtures/b2-arr-kiosk.csv?raw";
+import overnightCsv from "@/logic/fixtures/a-arr-kiosk.csv?raw";
+import { presenceTotals } from "@/logic/presence";
+import { timeToMinutes } from "@/logic/time";
+import type {
+  BoardState,
+  OfficeId,
+  Post,
+  PostKind,
+  RosterRow,
+  RuleSettings,
+  ShiftId,
+  Staff,
+  StaffingState,
+  StaffLoan,
+  Zone,
+} from "@/types";
+
+export type ShiftDef = {
+  id: ShiftId;
+  start: string;
+  end: string;
+  hours: number;
+  meal: boolean;
+  mealStart?: string;
+};
+
+export const SHIFTS: ShiftDef[] = [
+  { id: "B2", start: "06:45", end: "13:15", hours: 6.5, meal: false },
+  { id: "B1", start: "06:45", end: "14:45", hours: 8, meal: true, mealStart: "11:00" },
+  { id: "C2", start: "10:15", end: "18:15", hours: 8, meal: true, mealStart: "11:00" },
+  { id: "E1", start: "13:10", end: "19:40", hours: 6.5, meal: false },
+  { id: "E3", start: "14:30", end: "22:30", hours: 8, meal: true, mealStart: "18:00" },
+  { id: "E4", start: "15:45", end: "23:45", hours: 8, meal: true, mealStart: "18:00" },
+  { id: "E", start: "18:00", end: "23:59", hours: 6, meal: false },
+  { id: "A", start: "00:01", end: "07:00", hours: 7, meal: false },
+];
+
+export const OFFICES: { id: OfficeId; label: string; kind: "hall" | "kiosk" }[] = [
+  { id: "arr-hall", label: "Arr Hall", kind: "hall" },
+  { id: "dep-hall", label: "Dep Hall", kind: "hall" },
+  { id: "arr-kiosk", label: "Arr Kiosk", kind: "kiosk" },
+  { id: "dep-kiosk", label: "Dep Kiosk", kind: "kiosk" },
+];
+
+export const PERCENT_SHORTCUTS = [30, 50, 75, 100] as const;
+
+const SLOT_MINUTES = 30;
+
+export type RuleIssue = {
+  level: "error" | "warning";
+  rule: string;
+  message: string;
+};
+
+export function officeOf(id: OfficeId) {
+  return OFFICES.find((office) => office.id === id) ?? OFFICES[0];
+}
+
+export function shiftOf(id: ShiftId) {
+  return SHIFTS.find((shift) => shift.id === id) ?? SHIFTS[0];
+}
+
+export function officeLabel(id: OfficeId) {
+  return officeOf(id).label;
+}
+
+export function loanMarker(office: OfficeId) {
+  return `on loan to ${officeLabel(office)}`;
+}
+
+export function isLoanMarker(value: string) {
+  return value.startsWith("on loan to ");
+}
+
+export const EARLY_CELL = "早走";
+
+export function isGapCell(value: string) {
+  return !value || isLoanMarker(value) || value === EARLY_CELL;
+}
+
+export function extremeRules(shiftId: ShiftId): RuleSettings {
+  return { ...defaultRules(shiftId), maxConsecutiveHours: 2.5 };
+}
+
+export function apcPosts(gates: number, gatesPerPost: number) {
+  if (gatesPerPost <= 0) return 0;
+  return Math.floor(gates / gatesPerPost);
+}
+
+export function hallMax(counterMax: number, gates: number, gatesPerPost: number) {
+  return counterMax + apcPosts(gates, gatesPerPost);
+}
+
+export function siteCapacity(counterMax: number, gates: number, gatesPerPost: number, kioskMax: number) {
+  return hallMax(counterMax, gates, gatesPerPost) * 2 + kioskMax * 2;
+}
+
+export function scaleCount(max: number, percent: number) {
+  return Math.max(0, Math.round((max * percent) / 100));
+}
+
+export function awayHours(shiftId: ShiftId, rules: RuleSettings) {
+  if (shiftId === "A") {
+    const big = rules.requireBigRest ? rules.bigRestMinHours : 0;
+    return big + (rules.shortRestTurns * rules.shortRestMinutes) / 60;
+  }
+  const meal = rules.applyMeal ? rules.mealMinutes / 60 : 0;
+  return meal + (rules.restTurns * rules.restTurnMinutes) / 60;
+}
+
+/** 更上 ≈ 同時在崗 ÷ ((更長 − 離崗) / 更長) */
+export function requiredCrew(onDutyPosts: number, durationHours: number, away: number) {
+  if (onDutyPosts <= 0) return 0;
+  const working = durationHours - away;
+  if (working <= 0) return onDutyPosts;
+  return Math.ceil((onDutyPosts * durationHours) / working);
+}
+
+export function defaultRules(shiftId: ShiftId): RuleSettings {
+  const shift = shiftOf(shiftId);
+  const overnight = shiftId === "A";
+  return {
+    scatterRest: true,
+    stickyPost: true,
+    returnAfterRest: true,
+    respectPreference: true,
+    restTurns: overnight ? 2 : 3,
+    restTurnMinutes: 30,
+    mealMinutes: 60,
+    applyMeal: shift.meal,
+    bigRestMinHours: 2.5,
+    shortRestTurns: 2,
+    shortRestMinutes: 30,
+    maxConsecutiveHours: 2,
+    limitConsecutive: true,
+    requireBigRest: overnight,
+  };
+}
+
+export function isExtreme(rules: RuleSettings, shiftId: ShiftId) {
+  return JSON.stringify(rules) !== JSON.stringify(defaultRules(shiftId));
+}
+
+export function extremeNotes(rules: RuleSettings, shiftId: ShiftId) {
+  const base = defaultRules(shiftId);
+  const notes: string[] = [];
+  const flags: [keyof RuleSettings, string][] = [
+    ["scatterRest", "日間 R 拆散"],
+    ["stickyPost", "粘崗"],
+    ["returnAfterRest", "R 後返原崗"],
+    ["respectPreference", "跟員工喜好"],
+    ["applyMeal", "計 meal"],
+    ["limitConsecutive", "連續做上限"],
+    ["requireBigRest", "A 大休"],
+  ];
+  for (const [key, label] of flags) {
+    if (rules[key] !== base[key]) notes.push(`${label}已${rules[key] ? "打開" : "關掉"}`);
+  }
+  const numbers: [keyof RuleSettings, string, string][] = [
+    ["restTurns", "日間休息轉數", "轉"],
+    ["restTurnMinutes", "每轉休息", "分鐘"],
+    ["mealMinutes", "meal", "分鐘"],
+    ["bigRestMinHours", "大休最少", "小時"],
+    ["shortRestTurns", "A 細休轉數", "轉"],
+    ["shortRestMinutes", "A 細休", "分鐘"],
+    ["maxConsecutiveHours", "連續做上限", "小時"],
+  ];
+  for (const [key, label, unit] of numbers) {
+    if (rules[key] !== base[key]) notes.push(`${label} ${rules[key]}${unit}（預設 ${base[key]}${unit}）`);
+  }
+  return notes;
+}
+
+export function slotStarts(shiftId: ShiftId) {
+  if (shiftId === "A") {
+    const slots: string[] = [];
+    for (let minute = 0; minute < 7 * 60; minute += SLOT_MINUTES) slots.push(formatMinute(minute));
+    return slots;
+  }
+  const shift = shiftOf(shiftId);
+  const end = timeToMinutes(shift.end);
+  const slots: string[] = [];
+  for (let minute = timeToMinutes(shift.start); minute + SLOT_MINUTES <= end; minute += SLOT_MINUTES) {
+    slots.push(formatMinute(minute));
+  }
+  return slots;
+}
+
+export function slotIndexAt(slots: string[], now: string) {
+  const current = timeToMinutes(now);
+  for (let index = 0; index < slots.length; index += 1) {
+    const start = timeToMinutes(slots[index] ?? "00:00");
+    if (current >= start && current < start + SLOT_MINUTES) return index;
+  }
+  return -1;
+}
+
+export function bookKey(officeId: OfficeId, shiftId: ShiftId, counters: number, apc: number, kiosks: number) {
+  const office = officeOf(officeId);
+  return office.kind === "hall" ? `${officeId}|${shiftId}|c${counters}|a${apc}` : `${officeId}|${shiftId}|k${kiosks}`;
+}
+
+export function openPostCodes(officeId: OfficeId, staffing: Pick<StaffingState, "counters" | "apc" | "kiosks">) {
+  const office = officeOf(officeId);
+  if (office.kind === "hall") {
+    return [
+      ...numbers(staffing.counters).map(String),
+      ...numbers(staffing.apc).map((index) => `Apc ${index}`),
+    ];
+  }
+  return numbers(staffing.kiosks).map((index) => `A${index}`);
+}
+
+export function simultaneousPosts(officeId: OfficeId, staffing: StaffingState) {
+  return openPostCodes(officeId, staffing).length;
+}
+
+export function postKind(code: string): PostKind | null {
+  if (/^Apc \d+$/.test(code)) return "apc";
+  if (/^A\d+$/.test(code)) return "kiosk";
+  if (/^\d+$/.test(code)) return "counter";
+  return null;
+}
+
+export function isRestCode(code: string) {
+  return code === "R" || code === "B" || code === "MB";
+}
+
+export function parseRosterCsv(text: string, officeId: OfficeId): { slots: string[]; rows: RosterRow[] } {
+  const lines = text.trim().split(/\r?\n/);
+  const header = splitCsv(lines[0] ?? "");
+  const slotIndexes: number[] = [];
+  const slots: string[] = [];
+  header.forEach((cell, index) => {
+    if (/^\d{2}:\d{2}$/.test(cell)) {
+      slotIndexes.push(index);
+      slots.push(cell);
+    }
+  });
+  const rows = lines.slice(1).filter(Boolean).map((line) => {
+    const cols = splitCsv(line);
+    const code = cols[0] ?? "";
+    return {
+      id: rowId(officeId, code),
+      code,
+      allows: [],
+      cells: slotIndexes.map((index) => cols[index] ?? ""),
+    };
+  });
+  return { slots, rows };
+}
+
+export function createDefaultStaffing(): StaffingState {
+  const rules = defaultRules("B2");
+  const staffing: StaffingState = {
+    officeId: "arr-hall",
+    shiftId: "B2",
+    percent: 100,
+    counters: 30,
+    apc: 10,
+    kiosks: 12,
+    gates: 60,
+    gatesPerPost: 6,
+    counterMax: 30,
+    kioskMax: 12,
+    rules,
+    lockedCodes: ["1"],
+    books: {},
+    loans: [],
+    closures: [],
+  };
+  const hall = parseRosterCsv(hallCsv, "arr-hall");
+  const kiosk = parseRosterCsv(kioskCsv, "arr-kiosk");
+  const overnight = parseRosterCsv(overnightCsv, "arr-kiosk");
+  staffing.books[bookKey("arr-hall", "B2", 30, 10, 12)] = hall.rows;
+  staffing.books[bookKey("dep-hall", "B2", 30, 10, 12)] = cloneRows(hall.rows, "dep-hall");
+  staffing.books[bookKey("arr-kiosk", "B2", 30, 10, 12)] = kiosk.rows;
+  staffing.books[bookKey("dep-kiosk", "B2", 30, 10, 12)] = cloneRows(kiosk.rows, "dep-kiosk");
+  staffing.books[bookKey("arr-kiosk", "A", 9, 3, 4)] = overnight.rows;
+  return staffing;
+}
+
+export function rowsFor(staffing: StaffingState, officeId = staffing.officeId, shiftId = staffing.shiftId) {
+  const key = bookKey(officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+  return staffing.books[key] ?? generateRoster(officeId, shiftId, staffing);
+}
+
+export function withBook(staffing: StaffingState, officeId: OfficeId, shiftId: ShiftId, rows: RosterRow[]): StaffingState {
+  const key = bookKey(officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+  return { ...staffing, books: { ...staffing.books, [key]: rows } };
+}
+
+export function activeRows(staffing: StaffingState) {
+  return rowsFor(staffing);
+}
+
+export function setOffice(state: BoardState, officeId: OfficeId): BoardState {
+  if (!state.staffing) return state;
+  return { ...state, staffing: { ...state.staffing, officeId } };
+}
+
+export function setShift(state: BoardState, shiftId: ShiftId): BoardState {
+  if (!state.staffing) return state;
+  const current = state.staffing;
+  const rules = isExtreme(current.rules, current.shiftId) ? current.rules : defaultRules(shiftId);
+  return { ...state, shiftName: shiftId, staffing: { ...current, shiftId, rules } };
+}
+
+export function setPercent(state: BoardState, percent: number): BoardState {
+  if (!state.staffing || !Number.isFinite(percent)) return state;
+  const staffing = state.staffing;
+  const clamped = Math.min(100, Math.max(0, Math.round(percent * 10) / 10));
+  const counters = scaleCount(staffing.counterMax, clamped);
+  const apc = scaleCount(apcPosts(staffing.gates, staffing.gatesPerPost), clamped);
+  const kiosks = scaleCount(staffing.kioskMax, clamped);
+  return { ...state, staffing: { ...staffing, percent: clamped, counters, apc, kiosks } };
+}
+
+export function setOpenCounts(state: BoardState, patch: Partial<Pick<StaffingState, "counters" | "apc" | "kiosks" | "gates" | "gatesPerPost">>): BoardState {
+  if (!state.staffing) return state;
+  return { ...state, staffing: { ...state.staffing, ...patch, percent: null } };
+}
+
+export function setRules(state: BoardState, rules: RuleSettings): BoardState {
+  if (!state.staffing) return state;
+  return { ...state, staffing: { ...state.staffing, rules } };
+}
+
+export function setRowAllows(state: BoardState, rowId: string, allows: PostKind[]): BoardState {
+  if (!state.staffing) return state;
+  const staffing = state.staffing;
+  const rows = activeRows(staffing).map((row) => (row.id === rowId ? { ...row, allows: normalizeAllows(allows) } : row));
+  const loans = staffing.loans.map((loan) => (loan.personId === rowId || loan.id === rowId ? { ...loan, allows: normalizeAllows(allows) } : loan));
+  return { ...state, staffing: { ...withBook(staffing, staffing.officeId, staffing.shiftId, rows), loans } };
+}
+
+export function setCell(state: BoardState, rowId: string, slotIndex: number, value: string): BoardState {
+  if (!state.staffing) return state;
+  const staffing = state.staffing;
+  const next = value.trim();
+  if (rowId.startsWith("loan:")) {
+    const loans = staffing.loans.map((loan) => {
+      if (`loan:${loan.id}` !== rowId) return loan;
+      const cells = loan.cells.slice();
+      cells[slotIndex] = next;
+      return { ...loan, cells };
+    });
+    return { ...state, staffing: { ...staffing, loans } };
+  }
+  const rows = activeRows(staffing).map((row) => {
+    if (row.id !== rowId) return row;
+    if (isLoanMarker(row.cells[slotIndex] ?? "")) return row;
+    const cells = row.cells.slice();
+    cells[slotIndex] = next;
+    return { ...row, cells };
+  });
+  return { ...state, staffing: withBook(staffing, staffing.officeId, staffing.shiftId, rows) };
+}
+
+export function createLoan(
+  state: BoardState,
+  input: { personId: string; toOffice: OfficeId; start: string; end: string | null; fromOffice?: OfficeId },
+): { ok: true; state: BoardState } | { ok: false; reason: string } {
+  if (!state.staffing) return { ok: false, reason: "未有編崗。" };
+  const staffing = state.staffing;
+  const fromOffice = input.fromOffice ?? staffing.officeId;
+  if (input.toOffice === fromOffice) return { ok: false, reason: "不能借給自己這個區。" };
+  const sourceKey = bookKey(fromOffice, staffing.shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+  const rows = staffing.books[sourceKey] ?? generateRoster(fromOffice, staffing.shiftId, staffing);
+  const person = rows.find((row) => row.id === input.personId);
+  if (!person) return { ok: false, reason: "找不到這個人。" };
+  if (staffing.loans.some((loan) => loan.personId === person.id && loan.shiftId === staffing.shiftId)) {
+    return { ok: false, reason: "這個人這一更已經借出。" };
+  }
+  const slots = slotStarts(staffing.shiftId);
+  const window = slotWindow(slots, input.start, input.end ?? shiftOf(staffing.shiftId).end);
+  if (!window.length) return { ok: false, reason: "借調時段不在這一更裡面。" };
+  const sourceShadow = person.cells.slice();
+  const marked = person.cells.slice();
+  for (const index of window) marked[index] = loanMarker(input.toOffice);
+  const destKey = bookKey(input.toOffice, staffing.shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+  const destRows = staffing.books[destKey] ?? generateRoster(input.toOffice, staffing.shiftId, staffing);
+  const cells = fillLoanCells(slots, window, destRows, staffing.rules, person.allows, openPostCodes(input.toOffice, staffing));
+  const loan: StaffLoan = {
+    id: `loan-${person.id}-${input.toOffice}-${input.start}`,
+    personId: person.id,
+    personCode: person.code,
+    fromOffice,
+    toOffice: input.toOffice,
+    shiftId: staffing.shiftId,
+    start: input.start,
+    end: input.end,
+    allows: person.allows,
+    cells,
+    sourceShadow,
+  };
+  const nextRows = rows.map((row) => (row.id === person.id ? { ...row, cells: marked } : row));
+  const booked = withBook({ ...staffing, loans: [...staffing.loans, loan] }, fromOffice, staffing.shiftId, nextRows);
+  return {
+    ok: true,
+    state: {
+      ...state,
+      staffing: { ...booked, books: { ...booked.books, [destKey]: destRows } },
+    },
+  };
+}
+
+export function revokeLoan(state: BoardState, loanId: string): BoardState {
+  if (!state.staffing) return state;
+  const loan = state.staffing.loans.find((item) => item.id === loanId);
+  if (!loan) return state;
+  const sourceKey = bookKey(loan.fromOffice, loan.shiftId, state.staffing.counters, state.staffing.apc, state.staffing.kiosks);
+  const sourceRows = (state.staffing.books[sourceKey] ?? []).map((row) =>
+    row.id === loan.personId ? { ...row, cells: loan.sourceShadow.slice() } : row,
+  );
+  return {
+    ...state,
+    staffing: {
+      ...state.staffing,
+      loans: state.staffing.loans.filter((item) => item.id !== loanId),
+      books: { ...state.staffing.books, [sourceKey]: sourceRows },
+    },
+  };
+}
+
+export function setLoanEnd(state: BoardState, loanId: string, end: string | null): BoardState {
+  if (!state.staffing) return state;
+  const staffing = state.staffing;
+  const loans = staffing.loans.map((loan) => {
+    if (loan.id !== loanId) return loan;
+    const slots = slotStarts(loan.shiftId);
+    const window = slotWindow(slots, loan.start, end ?? shiftOf(loan.shiftId).end);
+    const destRows = rowsFor({ ...staffing, officeId: loan.toOffice, shiftId: loan.shiftId });
+    const filled = fillLoanCells(slots, window, destRows, staffing.rules, loan.allows, openPostCodes(loan.toOffice, staffing));
+    for (const index of window) {
+      if (loan.cells[index]) filled[index] = loan.cells[index] ?? filled[index];
+    }
+    return { ...loan, end, cells: filled };
+  });
+  const sourceBooks = { ...staffing.books };
+  for (const loan of staffing.loans) {
+    if (loan.id !== loanId) continue;
+    const sourceKey = bookKey(loan.fromOffice, loan.shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+    const nextLoan = loans.find((item) => item.id === loanId);
+    sourceBooks[sourceKey] = (staffing.books[sourceKey] ?? []).map((row) => {
+      if (row.id !== loan.personId || !nextLoan) return row;
+      const cells = loan.sourceShadow.slice();
+      const window = slotWindow(slotStarts(loan.shiftId), loan.start, end ?? shiftOf(loan.shiftId).end);
+      for (const index of window) cells[index] = loanMarker(loan.toOffice);
+      return { ...row, cells };
+    });
+  }
+  return { ...state, staffing: { ...staffing, loans, books: sourceBooks } };
+}
+
+export function shortageAdvice(staffing: StaffingState, now: string) {
+  const slots = slotStarts(staffing.shiftId);
+  const index = slotIndexAt(slots, now);
+  if (index < 0) return { missing: [] as string[], text: "這一更未開始，未有在崗缺口。" };
+  const open = codesAt(staffing, staffing.officeId, slots[index] ?? now);
+  const taken = new Set<string>();
+  for (const row of rosterRows(staffing, staffing.officeId)) {
+    const cell = row.cells[index] ?? "";
+    if (!isGapCell(cell) && !isRestCode(cell)) taken.add(cell);
+  }
+  const missing = open.filter((code) => !taken.has(code));
+  let bestLabel = "";
+  let bestFree = 0;
+  for (const office of OFFICES) {
+    if (office.id === staffing.officeId) continue;
+    const free = rowsFor(staffing, office.id, staffing.shiftId).filter((row) => {
+      const cell = row.cells[index] ?? "";
+      const loaned = staffing.loans.some((loan) => loan.personId === row.id && loan.shiftId === staffing.shiftId);
+      return cell === "R" && !loaned;
+    }).length;
+    if (free > bestFree) {
+      bestFree = free;
+      bestLabel = office.label;
+    }
+  }
+  const text = missing.length === 0
+    ? "而家崗位都有人。"
+    : bestFree > 0
+      ? `而家缺 ${missing.length} 人。${bestLabel} 有 ${bestFree} 人在休息，可向該區借。`
+      : `而家缺 ${missing.length} 人。其他區這一格沒有人在休息。`;
+  return { missing, text };
+}
+
+export function applyEarlyLeave(
+  state: BoardState,
+  input: { personId: string; at: string; strategy: "close" | "fill" | "borrow"; fromOffice?: OfficeId },
+): { ok: true; state: BoardState; note: string } | { ok: false; reason: string } {
+  if (!state.staffing) return { ok: false, reason: "未有編崗。" };
+  const staffing = state.staffing;
+  const slots = slotStarts(staffing.shiftId);
+  const rows = activeRows(staffing).map((row) => ({ ...row, cells: row.cells.slice() }));
+  const person = rows.find((row) => row.id === input.personId);
+  if (!person) return { ok: false, reason: "找不到這個人。" };
+  if (person.cells.some((cell, index) => timeToMinutes(slots[index] ?? "00:00") >= timeToMinutes(input.at) && isLoanMarker(cell))) {
+    return { ok: false, reason: "這個人這段已經借出，請先改借調。" };
+  }
+  const vacated: { index: number; code: string }[] = [];
+  person.cells.forEach((cell, index) => {
+    if (timeToMinutes(slots[index] ?? "00:00") < timeToMinutes(input.at)) return;
+    if (cell && !isRestCode(cell) && !isGapCell(cell)) vacated.push({ index, code: cell });
+    if (!isLoanMarker(cell)) person.cells[index] = EARLY_CELL;
+  });
+  person.leaveEarlyAt = input.at;
+  let note = `${person.code} 由 ${input.at} 早走。`;
+  let closures = staffing.closures ?? [];
+  if (input.strategy === "close") {
+    closures = [
+      ...closures,
+      { id: `close-${person.id}-${input.at}`, officeId: staffing.officeId, shiftId: staffing.shiftId, slots: vacated },
+    ];
+    note += vacated.length ? ` 已減開 ${[...new Set(vacated.map((item) => item.code))].join("、")}。` : " 這段沒有在崗格可減。";
+  }
+  if (input.strategy === "fill") {
+    const missed: string[] = [];
+    for (const item of vacated) {
+      const filler = rows.find((row) =>
+        row.id !== person.id
+        && row.cells[item.index] === "R"
+        && !row.leaveEarlyAt
+        && allowsCode(row.allows, item.code),
+      );
+      if (!filler) {
+        missed.push(`${slots[item.index]} ${item.code}`);
+        continue;
+      }
+      filler.cells[item.index] = item.code;
+    }
+    note += missed.length ? ` 未能補上 ${missed.join("、")}。` : " 其餘在休息的人已補上。";
+  }
+  const next = { ...state, staffing: withBook({ ...staffing, closures }, staffing.officeId, staffing.shiftId, rows) };
+  if (input.strategy !== "borrow") return { ok: true, state: next, note };
+  if (!input.fromOffice || input.fromOffice === staffing.officeId) return { ok: false, reason: "請揀一個其他區借人。" };
+  const donorBook = rowsFor(next.staffing!, input.fromOffice, staffing.shiftId);
+  const kinds = new Set(vacated.map((item) => postKind(item.code)).filter(Boolean));
+  const donor = donorBook.find((row) => {
+    const loaned = staffing.loans.some((loan) => loan.personId === row.id && loan.shiftId === staffing.shiftId);
+    if (loaned || row.leaveEarlyAt) return false;
+    if (vacated.length && !vacated.every((item) => allowsCode(row.allows, item.code))) return false;
+    if (kinds.size && row.allows.length && ![...kinds].every((kind) => kind && row.allows.includes(kind))) return false;
+    return true;
+  });
+  if (!donor) return { ok: false, reason: "那個區沒有符合喜好、又未借出的人。" };
+  const loaned = createLoan(next, {
+    personId: donor.id,
+    fromOffice: input.fromOffice,
+    toOffice: staffing.officeId,
+    start: input.at,
+    end: null,
+  });
+  if (!loaned.ok) return loaned;
+  const loan = loaned.state.staffing!.loans.at(-1);
+  if (loan) {
+    for (const item of vacated) loan.cells[item.index] = item.code;
+  }
+  return { ok: true, state: loaned.state, note: `${note} 已向 ${officeLabel(input.fromOffice)} 借 ${donor.code}。` };
+}
+
+function allowsCode(allows: PostKind[], code: string) {
+  const kind = postKind(code);
+  if (!kind) return false;
+  return allows.length === 0 || allows.includes(kind);
+}
+
+export function codesAt(staffing: StaffingState, officeId: OfficeId, when: string) {
+  const slots = slotStarts(staffing.shiftId);
+  const index = slotIndexAt(slots, when);
+  const closed = new Set<string>();
+  for (const closure of staffing.closures ?? []) {
+    if (closure.officeId !== officeId || closure.shiftId !== staffing.shiftId) continue;
+    for (const slot of closure.slots) {
+      if (slot.index === index) closed.add(slot.code);
+    }
+  }
+  return openPostCodes(officeId, staffing).filter((code) => !closed.has(code));
+}
+
+export function checkRoster(staffing: StaffingState, officeId = staffing.officeId): RuleIssue[] {
+  const shift = shiftOf(staffing.shiftId);
+  const slots = slotStarts(staffing.shiftId);
+  const rules = staffing.rules;
+  const rows = rosterRows(staffing, officeId);
+  const issues: RuleIssue[] = [];
+  const maxSlots = Math.max(1, Math.round((rules.maxConsecutiveHours * 60) / SLOT_MINUTES));
+
+  for (const row of rows) {
+    let workRun: string[] = [];
+    let restRun = 0;
+    let bigRun = 0;
+    let longestBig = 0;
+    let previousWork = "";
+    const flushWork = () => {
+      if (rules.stickyPost && new Set(workRun).size > 1) {
+        issues.push({ level: "error", rule: "粘崗", message: `${row.code} 同一段在崗轉了崗位。` });
+      }
+      if (rules.limitConsecutive && workRun.length > maxSlots) {
+        issues.push({
+          level: "error",
+          rule: "連續做",
+          message: `${row.code} 連續做了 ${workRun.length * 0.5} 小時，上限 ${rules.maxConsecutiveHours} 小時。`,
+        });
+      }
+      workRun = [];
+    };
+    row.cells.forEach((cell, index) => {
+      if (isGapCell(cell)) {
+        flushWork();
+        restRun = 0;
+        longestBig = Math.max(longestBig, bigRun);
+        bigRun = 0;
+        return;
+      }
+      if (cell === "R") {
+        flushWork();
+        restRun += 1;
+        longestBig = Math.max(longestBig, bigRun);
+        bigRun = 0;
+        if (rules.scatterRest && shift.id !== "A" && restRun > 1) {
+          issues.push({ level: "error", rule: "日間 R", message: `${row.code} 在 ${slots[index]} 的 R 連格。` });
+        }
+        return;
+      }
+      if (cell === "B" || cell === "MB") {
+        flushWork();
+        restRun = 0;
+        if (cell === "B") bigRun += 1;
+        else {
+          longestBig = Math.max(longestBig, bigRun);
+          bigRun = 0;
+        }
+        return;
+      }
+      restRun = 0;
+      longestBig = Math.max(longestBig, bigRun);
+      bigRun = 0;
+      if (rules.returnAfterRest && previousWork && cell !== previousWork && workRun.length === 0) {
+        const taken = rows.some((other, otherIndex) => other.cells[index] === previousWork && rows.indexOf(row) !== otherIndex);
+        if (!taken) {
+          issues.push({ level: "warning", rule: "返原崗", message: `${row.code} 在 ${slots[index]} 休息後未返 ${previousWork}。` });
+        }
+      }
+      if (!codesAt(staffing, officeId, slots[index] ?? "").includes(cell)) {
+        issues.push({ level: "error", rule: "開崗", message: `${row.code} 的 ${cell} 不在這一頁開崗裡。` });
+      }
+      const kind = postKind(cell);
+      if (rules.respectPreference && row.allows.length > 0 && kind && !row.allows.includes(kind)) {
+        issues.push({ level: "error", rule: "喜好", message: `${row.code} 不可派去 ${cell}。` });
+      }
+      workRun.push(cell);
+      previousWork = cell;
+    });
+    flushWork();
+    longestBig = Math.max(longestBig, bigRun);
+    if (rules.requireBigRest) {
+      const active = row.cells.filter((cell) => cell && !isGapCell(cell)).length;
+      const need = Math.round((rules.bigRestMinHours * 60) / SLOT_MINUTES);
+      if (active >= need && longestBig < need) {
+        issues.push({ level: "error", rule: "大休", message: `${row.code} 大休只有 ${longestBig * 0.5} 小時，最少 ${rules.bigRestMinHours} 小時。` });
+      } else if (active < need && longestBig < need) {
+        issues.push({ level: "warning", rule: "大休", message: `${row.code} 在更內時間短過大休下限。` });
+      }
+    }
+  }
+
+  slots.forEach((slot, index) => {
+    const seen = new Map<string, number>();
+    for (const row of rows) {
+      const cell = row.cells[index] ?? "";
+      if (isGapCell(cell) || isRestCode(cell)) continue;
+      seen.set(cell, (seen.get(cell) ?? 0) + 1);
+    }
+    for (const [code, count] of seen) {
+      if (count > 1) issues.push({ level: "error", rule: "重崗", message: `${slot} 的 ${code} 有 ${count} 人。` });
+    }
+    const missing = codesAt(staffing, officeId, slot).filter((code) => !seen.has(code));
+    if (missing.length) {
+      issues.push({ level: "warning", rule: "缺人", message: `${slot} 還有 ${missing.length} 個崗位沒人。` });
+    }
+  });
+  return issues;
+}
+
+export function rosterRows(staffing: StaffingState, officeId: OfficeId) {
+  const local = rowsFor(staffing, officeId, staffing.shiftId).map((row) => ({ ...row, cells: row.cells.slice() }));
+  const incoming = staffing.loans.filter((loan) => loan.toOffice === officeId && loan.shiftId === staffing.shiftId);
+  for (const loan of incoming) {
+    local.push({
+      id: `loan:${loan.id}`,
+      code: loan.personCode,
+      allows: loan.allows,
+      cells: loan.cells.slice(),
+    });
+  }
+  return local;
+}
+
+export function projectBoard(state: BoardState): BoardState {
+  if (!state.staffing) return state;
+  const staffing = state.staffing;
+  const slots = slotStarts(staffing.shiftId);
+  const index = slotIndexAt(slots, state.now);
+  const shift = shiftOf(staffing.shiftId);
+  const codes = codesAt(staffing, staffing.officeId, state.now);
+  const rows = rosterRows(staffing, staffing.officeId);
+  const posts: Post[] = codes.map((code, order) => ({
+    id: `post-${code.replace(/\s+/g, "-")}`,
+    zoneId: postKind(code) === "apc" ? "apc" : postKind(code) === "kiosk" ? "kiosk" : "counter",
+    name: code,
+    order,
+    locked: staffing.lockedCodes.includes(code),
+    assigneeId: null,
+  }));
+  const staff: Staff[] = [];
+  if (index >= 0) {
+    const slotStart = slots[index] ?? shift.start;
+    const slotEnd = formatMinute(timeToMinutes(slotStart) + SLOT_MINUTES);
+    rows.forEach((row, order) => {
+      const cell = row.cells[index] ?? "";
+      if (!cell || isLoanMarker(cell)) return;
+      const person = personFromRow(row, order, shift, staffing.shiftId);
+      if (cell === EARLY_CELL) {
+        person.leaveEarlyAt = row.leaveEarlyAt ?? slotStart;
+        staff.push(person);
+        return;
+      }
+      if (isRestCode(cell)) {
+        person.breakStart = slotStart;
+        person.breakEnd = slotEnd;
+      } else {
+        const post = posts.find((item) => item.name === cell && !item.assigneeId);
+        if (post) post.assigneeId = person.id;
+      }
+      staff.push(person);
+    });
+  }
+  const zones: Zone[] = officeOf(staffing.officeId).kind === "hall"
+    ? [
+        { id: "counter", title: "櫃位", code: "CTR", templateId: "ARR" },
+        { id: "apc", title: "APC", code: "APC", templateId: "STBY" },
+      ]
+    : [{ id: "kiosk", title: "Kiosk", code: "KIOSK", templateId: "KIOSK" }];
+  return {
+    ...state,
+    shiftName: staffing.shiftId,
+    zones,
+    posts,
+    staff,
+  };
+}
+
+export function absorbShown(base: BoardState, shown: BoardState): BoardState {
+  if (!base.staffing || shown.now !== base.now) {
+    return { ...base, date: shown.date, now: shown.now };
+  }
+  const staffing = base.staffing;
+  const slots = slotStarts(staffing.shiftId);
+  const index = slotIndexAt(slots, base.now);
+  if (index < 0) return { ...base, date: shown.date, now: shown.now };
+  const rows = activeRows(staffing).map((row) => ({ ...row, cells: row.cells.slice() }));
+  const loans = staffing.loans.map((loan) => ({ ...loan, cells: loan.cells.slice() }));
+  for (const person of shown.staff) {
+    const post = shown.posts.find((item) => item.assigneeId === person.id);
+    const rest = person.breakStart ? restToken(rows, loans, person.id, index) : "";
+    const value = post?.name ?? rest;
+    if (!value) continue;
+    if (person.id.startsWith("loan:")) {
+      const loan = loans.find((item) => `loan:${item.id}` === person.id);
+      if (loan && !isLoanMarker(value)) loan.cells[index] = value;
+      continue;
+    }
+    const row = rows.find((item) => item.id === person.id);
+    if (!row || isLoanMarker(row.cells[index] ?? "")) continue;
+    row.cells[index] = value;
+    row.allows = normalizeAllows(person.allows ?? []);
+    row.leaveEarlyAt = person.leaveEarlyAt;
+    row.returnLateAt = person.returnLateAt;
+    row.restLocked = person.restLocked;
+  }
+  return {
+    ...base,
+    date: shown.date,
+    now: shown.now,
+    staffing: {
+      ...withBook(staffing, staffing.officeId, staffing.shiftId, rows),
+      loans,
+      lockedCodes: shown.posts.filter((post) => post.locked).map((post) => post.name),
+    },
+  };
+}
+
+export function previewRows(staffing: StaffingState) {
+  return generateRoster(staffing.officeId, staffing.shiftId, staffing, !isExtreme(staffing.rules, staffing.shiftId));
+}
+
+export function previewFilename(staffing: StaffingState) {
+  const office = staffing.officeId;
+  const shift = staffing.shiftId.toLowerCase();
+  const percent = staffing.percent == null ? "custom" : `${staffing.percent}pct`;
+  return `preview-${office}-${shift}-${percent}.xlsx`;
+}
+
+export function crewFor(staffing: StaffingState, officeId = staffing.officeId) {
+  const shift = shiftOf(staffing.shiftId);
+  return requiredCrew(simultaneousPosts(officeId, staffing), shift.hours, awayHours(staffing.shiftId, staffing.rules));
+}
+
+/** Top-bar presence for one office. Does not add the other three offices. */
+export function officeFocus(state: BoardState, officeId: OfficeId = state.staffing?.officeId ?? "arr-hall") {
+  if (!state.staffing) return null;
+  const shown = projectBoard({ ...state, staffing: { ...state.staffing, officeId } });
+  return {
+    officeId,
+    label: officeLabel(officeId),
+    ...presenceTotals(shown),
+    crew: crewFor(state.staffing, officeId),
+  };
+}
+
+export function siteOverview(state: BoardState) {
+  const offices = OFFICES.map((office) => officeFocus(state, office.id)).filter((item) => item != null);
+  return {
+    offices,
+    onSite: offices.reduce((sum, item) => sum + item.onSite, 0),
+    filled: offices.reduce((sum, item) => sum + item.filled, 0),
+    total: offices.reduce((sum, item) => sum + item.total, 0),
+    crew: offices.reduce((sum, item) => sum + item.crew, 0),
+  };
+}
+
+export function reflowOffice(state: BoardState): { ok: true; state: BoardState } | { ok: false; reason: string } {
+  if (!state.staffing) return { ok: false, reason: "未有編崗。" };
+  const staffing = state.staffing;
+  const blocked = staffing.loans.some(
+    (loan) => loan.shiftId === staffing.shiftId && (loan.fromOffice === staffing.officeId || loan.toOffice === staffing.officeId),
+  );
+  if (blocked) return { ok: false, reason: "這一頁有借調，請先撤銷再重排。" };
+  const useSample = !isExtreme(staffing.rules, staffing.shiftId);
+  const rows = generateRoster(staffing.officeId, staffing.shiftId, staffing, useSample);
+  return { ok: true, state: { ...state, staffing: withBook(staffing, staffing.officeId, staffing.shiftId, rows) } };
+}
+
+export function generateRoster(
+  officeId: OfficeId,
+  shiftId: ShiftId,
+  staffing: Pick<StaffingState, "counters" | "apc" | "kiosks" | "rules">,
+  useSample = true,
+): RosterRow[] {
+  if (useSample) {
+    const known = sampleRows(officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+    if (known) return known.map((row) => ({ ...row, cells: row.cells.slice(), allows: row.allows.slice() }));
+  }
+  const rules = staffing.rules;
+  const slots = slotStarts(shiftId);
+  const posts = openPostCodes(officeId, staffing);
+  const crew = requiredCrew(posts.length, shiftOf(shiftId).hours, awayHours(shiftId, rules));
+  const restCount = shiftId === "A" ? rules.shortRestTurns : rules.restTurns;
+  const blocked = mealIndexes(shiftId, slots, rules);
+  const rests = new Map<number, Set<number>>();
+  for (let slot = 0; slot < slots.length; slot += 1) rests.set(slot, new Set());
+  const plan: string[][] = [];
+  for (let person = 0; person < Math.max(crew, 1); person += 1) {
+    const cells = Array.from({ length: slots.length }, () => "");
+    const restAt = pickRests(slots.length, restCount, blocked, person, rests, posts.length);
+    for (const index of restAt) cells[index] = "R";
+    for (const index of blocked) cells[index] = shiftId === "A" ? "B" : "MB";
+    if (shiftId === "A" && rules.requireBigRest) {
+      const need = Math.max(1, Math.round((rules.bigRestMinHours * 60) / SLOT_MINUTES));
+      const start = person % Math.max(1, slots.length - need);
+      for (let step = 0; step < need; step += 1) {
+        const index = start + step;
+        if (cells[index] === "R") rests.get(index)?.delete(person);
+        cells[index] = "B";
+      }
+    }
+    plan.push(cells);
+  }
+  const occupancy = slots.map(() => new Set<string>());
+  for (let person = 0; person < plan.length; person += 1) {
+    let previous = "";
+    let chunk: number[] = [];
+    const flush = () => {
+      if (!chunk.length) return;
+      assignChunk(plan[person] ?? [], chunk, previous, posts, occupancy, rules.stickyPost, rules.limitConsecutive ? Math.max(1, Math.round((rules.maxConsecutiveHours * 60) / SLOT_MINUTES)) : chunk.length);
+      const filled = chunk.map((index) => plan[person]?.[index] ?? "").find((value) => value && !isRestCode(value));
+      if (filled) previous = filled;
+      chunk = [];
+    };
+    plan[person]?.forEach((cell, index) => {
+      if (cell) flush();
+      else chunk.push(index);
+    });
+    flush();
+  }
+  return plan.map((cells, index) => ({
+    id: rowId(officeId, `K${index + 1}`),
+    code: `K${index + 1}`,
+    allows: [],
+    cells,
+  }));
+}
+
+function sampleRows(officeId: OfficeId, shiftId: ShiftId, counters: number, apc: number, kiosks: number) {
+  const staffing = createDefaultStaffing();
+  const key = bookKey(officeId, shiftId, counters, apc, kiosks);
+  return staffing.books[key];
+}
+
+function assignChunk(cells: string[], chunk: number[], previous: string, posts: string[], occupancy: Set<string>[], sticky: boolean, maxSlots: number) {
+  const groups: number[][] = [];
+  for (let index = 0; index < chunk.length; index += maxSlots) groups.push(chunk.slice(index, index + maxSlots));
+  let prefer = previous;
+  for (const group of groups) {
+    const choice = choosePost(group, prefer, posts, occupancy) ?? choosePost(group.slice(0, 1), prefer, posts, occupancy);
+    for (const slot of group) {
+      const code = sticky ? choice : choosePost([slot], prefer, posts, occupancy);
+      if (!code) {
+        cells[slot] = "R";
+        continue;
+      }
+      cells[slot] = code;
+      occupancy[slot]?.add(code);
+      prefer = code;
+    }
+  }
+}
+
+function choosePost(slots: number[], prefer: string, posts: string[], occupancy: Set<string>[]) {
+  const free = (code: string) => slots.every((slot) => !occupancy[slot]?.has(code));
+  if (prefer && posts.includes(prefer) && free(prefer)) return prefer;
+  return posts.find(free) ?? null;
+}
+
+function pickRests(slotCount: number, turns: number, blocked: Set<number>, person: number, rests: Map<number, Set<number>>, posts: number) {
+  const picked: number[] = [];
+  const targetRest = Math.max(0, slotCount > 0 ? Math.round(((person < 9999 ? turns : turns) * 1) ) : 0);
+  void posts;
+  for (let turn = 0; turn < targetRest && turns > 0; turn += 1) {
+    const seed = Math.floor(((turn + 0.5) * slotCount) / turns + person) % slotCount;
+    for (let step = 0; step < slotCount; step += 1) {
+      const index = (seed + step) % slotCount;
+      if (blocked.has(index) || picked.includes(index)) continue;
+      if (picked.some((item) => Math.abs(item - index) === 1)) continue;
+      picked.push(index);
+      rests.get(index)?.add(person);
+      break;
+    }
+  }
+  return picked;
+}
+
+function mealIndexes(shiftId: ShiftId, slots: string[], rules: RuleSettings) {
+  const blocked = new Set<number>();
+  if (shiftId === "A") return blocked;
+  if (!rules.applyMeal) return blocked;
+  const start = timeToMinutes(shiftOf(shiftId).mealStart ?? "11:00");
+  const end = start + rules.mealMinutes;
+  slots.forEach((slot, index) => {
+    const minute = timeToMinutes(slot);
+    if (minute >= start && minute < end) blocked.add(index);
+  });
+  return blocked;
+}
+
+function fillLoanCells(slots: string[], window: number[], destRows: RosterRow[], rules: RuleSettings, allows: PostKind[], open: string[]) {
+  const cells = Array.from({ length: slots.length }, () => "");
+  const occupancy = slots.map((_, index) => {
+    const taken = new Set<string>();
+    for (const row of destRows) {
+      const value = row.cells[index] ?? "";
+      if (value && !isRestCode(value) && !isLoanMarker(value)) taken.add(value);
+    }
+    return taken;
+  });
+  const allowed = open.filter((code) => {
+    const kind = postKind(code);
+    return !kind || allows.length === 0 || allows.includes(kind);
+  });
+  const maxSlots = rules.limitConsecutive ? Math.max(1, Math.round((rules.maxConsecutiveHours * 60) / SLOT_MINUTES)) : window.length;
+  let previous = "";
+  let run = 0;
+  for (const index of window) {
+    const needRest = rules.scatterRest && run >= maxSlots;
+    if (needRest) {
+      cells[index] = "R";
+      run = 0;
+      continue;
+    }
+    const choice = choosePost([index], previous, allowed, occupancy);
+    if (!choice) {
+      cells[index] = "R";
+      run = 0;
+      continue;
+    }
+    cells[index] = choice;
+    occupancy[index]?.add(choice);
+    previous = choice;
+    run += 1;
+  }
+  return cells;
+}
+
+function slotWindow(slots: string[], start: string, end: string) {
+  const from = timeToMinutes(start);
+  const to = timeToMinutes(end);
+  const indexes: number[] = [];
+  slots.forEach((slot, index) => {
+    const minute = timeToMinutes(slot);
+    if (minute + SLOT_MINUTES > from && minute < to) indexes.push(index);
+  });
+  return indexes;
+}
+
+function personFromRow(row: RosterRow, order: number, shift: ShiftDef, shiftId: ShiftId): Staff {
+  return {
+    id: row.id,
+    code: row.code,
+    shift: shiftId,
+    dutyStart: shift.start,
+    dutyEnd: shift.end,
+    breakStart: null,
+    breakEnd: null,
+    leaveEarlyAt: row.leaveEarlyAt ?? null,
+    returnLateAt: row.returnLateAt ?? null,
+    restLocked: row.restLocked ?? false,
+    restOrder: order,
+    allows: row.allows,
+  };
+}
+
+function restToken(rows: RosterRow[], loans: StaffLoan[], personId: string, index: number) {
+  const row = rows.find((item) => item.id === personId);
+  const current = row?.cells[index] ?? loans.find((loan) => `loan:${loan.id}` === personId)?.cells[index] ?? "";
+  if (current === "B" || current === "MB") return current;
+  return "R";
+}
+
+function cloneRows(rows: RosterRow[], officeId: OfficeId) {
+  return rows.map((row) => ({ ...row, id: rowId(officeId, row.code), allows: row.allows.slice(), cells: row.cells.slice() }));
+}
+
+function rowId(officeId: OfficeId, code: string) {
+  return `${officeId}:${code}`;
+}
+
+function numbers(count: number) {
+  return Array.from({ length: Math.max(0, count) }, (_, index) => index + 1);
+}
+
+function formatMinute(value: number) {
+  const minute = ((value % (24 * 60)) + 24 * 60) % (24 * 60);
+  return `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+}
+
+function splitCsv(line: string) {
+  return line.split(",").map((cell) => cell.trim());
+}
+
+function normalizeAllows(allows: PostKind[]) {
+  const unique = [...new Set(allows)];
+  return unique.length >= 3 ? [] : unique;
+}

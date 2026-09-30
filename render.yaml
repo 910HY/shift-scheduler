@@ -1,0 +1,13 @@
+# 渣板 — one Docker web service (UI + /api on $PORT).
+# The live URL https://shift-scheduler-9ct4.onrender.com/ is the existing
+# service. Switch THAT service to Docker (see README) so the URL stays.
+# Creating a brand-new Blueprint from this file makes a second service
+# with a different onrender.com hostname.
+services:
+  - type: web
+    name: shift-scheduler
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="今日編更">
+    <meta name="theme-color" content="#ffffff">
+    <title>今日編更｜即日人手調度</title>
+    <meta name="description" content="現場用即日編更：時間軸、對調、走咗頂替，重算用 OR-Tools。">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <link rel="apple-touch-icon" href="/static/favicon.png">
+    <link rel="stylesheet" href="/static/app.css?v=9">
+</head>
+<body>
+    <div id="app">
+        <section id="view-today" class="view is-active" data-view="today">
+            <header class="page-header">
+                <div>
+                    <h1>今日編更</h1>
+                    <p id="today-date" class="page-subtitle"></p>
+                </div>
+                <button type="button" class="icon-btn" id="btn-calendar" aria-label="日期">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <rect x="3" y="5" width="18" height="16" rx="2"></rect>
+                        <path d="M3 10h18M8 3v4M16 3v4"></path>
+                    </svg>
+                </button>
+            </header>
+            <button type="button" id="today-now-chip" class="now-chip" hidden aria-label="改示範時間"></button>
+            <button type="button" id="today-now-to-start" class="now-start-btn" hidden>將而家設為開始時間</button>
+            <div id="today-lock-banner" class="lock-banner" hidden></div>
+            <div id="timeline-root" class="timeline-root"></div>
+        </section>
+
+        <section id="view-staff" class="view" data-view="staff" hidden>
+            <header class="page-header">
+                <button type="button" class="icon-btn" id="btn-staff-menu" aria-label="選單">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M4 7h16M4 12h16M4 17h16"></path>
+                    </svg>
+                </button>
+                <h1 class="header-center">人手</h1>
+                <button type="button" class="icon-btn" id="btn-staff-filter" aria-label="篩選">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M4 6h16l-6 8v6l-4-2v-4L4 6z"></path>
+                    </svg>
+                </button>
+            </header>
+            <div id="staff-filter-bar" class="chip-row" hidden>
+                <button type="button" class="seg-chip is-on" data-filter="all">全部</button>
+                <button type="button" class="seg-chip" data-filter="on">在崗</button>
+                <button type="button" class="seg-chip" data-filter="rest">休息中</button>
+            </div>
+            <div id="staff-root" class="card-list"></div>
+        </section>
+
+        <section id="view-resolve" class="view" data-view="resolve" hidden>
+            <header class="page-header">
+                <h1 class="header-center">重算</h1>
+            </header>
+            <div class="resolve-body">
+                <p id="resolve-lead" class="resolve-lead">每一次重算都會呼叫後端 OR-Tools CP-SAT。已過時段同已確認格會鎖住，只填未來／未鎖定空缺。</p>
+                <div id="resolve-lock-banner" class="lock-banner" hidden></div>
+                <button type="button" id="btn-resolve" class="btn-primary btn-xl">
+                    <span class="btn-ico" aria-hidden="true">↻</span>重算未鎖定時段
+                </button>
+                <button type="button" id="btn-draft" class="btn-secondary btn-xl">生成草稿</button>
+                <p id="resolve-progress" class="resolve-progress" hidden></p>
+                <div id="resolve-report" class="resolve-report"></div>
+            </div>
+        </section>
+
+        <section id="view-more" class="view" data-view="more" hidden>
+            <header class="page-header">
+                <h1 class="header-center">更多</h1>
+            </header>
+            <div id="more-root" class="more-body"></div>
+        </section>
+
+        <nav class="tabbar" aria-label="主要分頁">
+            <button type="button" class="tab is-on" data-tab="today">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z"/></svg>
+                <span>今日</span>
+            </button>
+            <button type="button" class="tab" data-tab="staff">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm8 0a3 3 0 1 0-3-3 3 3 0 0 0 3 3zM4.5 19a3.5 3.5 0 0 1 7 0M12.5 19a3.5 3.5 0 0 1 7 0"/></svg>
+                <span>人手</span>
+            </button>
+            <button type="button" class="tab" data-tab="resolve">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 12a8 8 0 1 1-2.2-5.5M20 4v4h-4"/></svg>
+                <span>重算</span>
+            </button>
+            <button type="button" class="tab" data-tab="more">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><circle cx="6" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/></svg>
+                <span>更多</span>
+            </button>
+        </nav>
+    </div>
+
+    <div id="sheet" class="overlay" hidden>
+        <div class="overlay-backdrop" data-close="sheet"></div>
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+            <div class="sheet-handle"></div>
+            <h2 id="sheet-title" class="sheet-title"></h2>
+            <div id="sheet-actions" class="sheet-actions"></div>
+        </div>
+    </div>
+
+    <div id="swap" class="overlay" hidden>
+        <div class="swap-screen" role="dialog" aria-modal="true">
+            <header class="page-header swap-header">
+                <button type="button" class="text-btn" id="btn-swap-back">‹</button>
+                <h1 class="header-center">對調</h1>
+                <span class="header-spacer"></span>
+            </header>
+            <p class="swap-hint">選擇要對調的兩項班</p>
+            <div id="swap-cards" class="swap-cards"></div>
+            <div id="swap-pick-list" class="swap-pick-list"></div>
+            <div class="swap-footer">
+                <button type="button" id="btn-swap-confirm" class="btn-primary btn-xl" disabled>
+                    <span class="btn-ico">⇄</span>確認對調
+                </button>
+                <button type="button" id="btn-swap-cancel" class="btn-secondary btn-xl">取消</button>
+                <p class="swap-note">已確認／已過時段唔會改動</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="picker" class="overlay" hidden>
+        <div class="overlay-backdrop" data-close="picker"></div>
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+            <div class="sheet-handle"></div>
+            <h2 class="sheet-title" id="picker-title">搵人頂替</h2>
+            <div id="picker-actions" class="sheet-actions"></div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="/static/app.js?v=9"></script>
+</body>
+</html>

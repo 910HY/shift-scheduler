@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+venv
+node_modules
+dist
+archive
+server/test_solver.py
+pytest.ini
+__pycache__
+.pytest_cache
+*.pyc
+.DS_Store
+npm-debug.log*
+artifacts
+*.md
