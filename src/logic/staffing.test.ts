@@ -269,7 +269,9 @@ describe("early leave on the shared floor", () => {
     if (!result.ok) return;
     expect(result.state.staffing?.loans.length).toBeGreaterThan(0);
     const arrived = projectBoard({ ...result.state, now: "10:15" });
-    expect(arrived.staff.some((person) => person.id.startsWith("loan:"))).toBe(true);
+    const arrival = arrived.staff.find((person) => person.id.startsWith("loan:"));
+    expect(arrival?.dutyPost).toBe(holder!.dutyPost);
+    expect(arrived.posts.find((post) => post.name === holder!.dutyPost)?.assigneeId).toBe(arrival?.id);
     expect(arrived.staff.find((person) => person.id === holder!.id)?.dutyPost).toBeUndefined();
     const home = projectBoard({ ...result.state, now: "10:15", staffing: { ...result.state.staffing!, officeId: "dep-hall" } });
     const donor = result.state.staffing!.loans[0]!;

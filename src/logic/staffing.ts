@@ -652,6 +652,7 @@ export function applyEarlyLeave(
   const loan = loaned.state.staffing!.loans.at(-1);
   if (loan) {
     for (const item of vacated) loan.cells[item.index] = item.code;
+    for (const item of planVacated) loan.cells[item.index] = item.code;
   }
   return { ok: true, state: loaned.state, note: `${note} 已向 ${officeLabel(input.fromOffice)} 借 ${donor.code}。` };
 }
