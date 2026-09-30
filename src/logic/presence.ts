@@ -12,7 +12,7 @@ export function nowPlace(state: BoardState, person: Staff): NowPlace {
   if (isLateActive(person, state.now)) return "uvl";
   if (!isWithinDuty(person, state.now)) return "off";
   if (isOnBreak(person, state.now)) return "mb";
-  if (postOfStaff(state, person.id)) return "stand";
+  if (postOfStaff(state, person.id) || person.dutyPost) return "stand";
   return "r";
 }
 

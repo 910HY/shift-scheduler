@@ -13,6 +13,7 @@ import {
   applyEarlyLeave,
   bookKey,
   checkRoster,
+  combinedRoster,
   createLoan,
   crewFor,
   defaultRules,
@@ -24,6 +25,7 @@ import {
   officeLabel,
   officeOf,
   openPostCodes,
+  parseOverlapRowId,
   previewFilename,
   previewRows,
   projectBoard,
@@ -39,6 +41,8 @@ import {
   setRules,
   setShift,
   shiftOf,
+  shiftRoster,
+  shiftsActiveAt,
   shortageAdvice,
   siteCapacity,
   siteOverview,
@@ -46,7 +50,7 @@ import {
   slotStarts,
 } from "@/logic/staffing";
 import { useBoard } from "@/state/useBoard";
-import type { OfficeId, PostKind, RosterRow, RuleSettings, StaffingState } from "@/types";
+import type { OfficeId, PostKind, RosterRow, RuleSettings, ShiftId, StaffingState } from "@/types";
 
 const KINDS: { id: PostKind; label: string }[] = [
   { id: "counter", label: "櫃位" },
@@ -65,7 +69,7 @@ export function StaffingScreen() {
   const [hint, setHint] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
-  const [editor, setEditor] = useState<{ rowId: string; index: number; value: string } | null>(null);
+  const [editor, setEditor] = useState<{ rowId: string; index: number; value: string; shiftId?: ShiftId; nativeIndex: number } | null>(null);
   const [loanOpen, setLoanOpen] = useState(false);
   const [earlyOpen, setEarlyOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
@@ -77,17 +81,22 @@ export function StaffingScreen() {
   const focus = officeFocus(state) ?? { label: officeLabel(staffing.officeId), ...presenceTotals(shown), onSite: 0, onduty: 0, rest: 0, filled: 0, total: 0 };
   const presence = focus;
   const site = siteOpen ? siteOverview(state) : null;
-  const slots = slotStarts(staffing.shiftId);
-  const slotAt = slotIndexAt(slots, state.now);
+  const overlap = combinedRoster(staffing);
+  const slots = overlap.slots;
+  const nativeSlots = slotStarts(staffing.shiftId);
+  const slotAt = slotIndexAt(nativeSlots, state.now);
   const liveRows = rosterRows(staffing, staffing.officeId);
-  const rows = draft ?? liveRows;
-  const checkState = draft
-    ? { ...staffing, books: { ...staffing.books, [bookKey(staffing.officeId, staffing.shiftId, staffing.counters, staffing.apc, staffing.kiosks)]: draft } }
+  const rows = draft ?? overlap.rows;
+  const activeNow = shiftsActiveAt(state.now);
+  const previewBook = draft ? shiftRoster(staffing, staffing.shiftId, "preview") : null;
+  const checkState = previewBook
+    ? { ...staffing, books: { ...staffing.books, [bookKey(staffing.officeId, staffing.shiftId, staffing.counters, staffing.apc, staffing.kiosks)]: previewBook } }
     : staffing;
   const issues = checkRoster(checkState).filter((issue) => issue.level === "error");
   const crew = crewFor(staffing);
   const advice = shortageAdvice(staffing, state.now);
-  const selected = rows.find((row) => row.id === selectedId) ?? null;
+  const selectedSheet = rows.find((row) => rowMatches(row.id, selectedId)) ?? null;
+  const selected = editableRow(selectedSheet, staffing.shiftId);
   const extreme = isExtreme(staffing.rules, staffing.shiftId);
   const currentShift = shiftOf(staffing.shiftId);
 
@@ -120,9 +129,20 @@ export function StaffingScreen() {
     say("已套用這張 preview。");
   }
 
+  function openEditor(rowId: string, index: number, value: string) {
+    const parsed = parseOverlapRowId(rowId);
+    if (!parsed) {
+      setEditor({ rowId, index, value, nativeIndex: index });
+      return;
+    }
+    const nativeIndex = slotStarts(parsed.shiftId).indexOf(slots[index] ?? "");
+    if (nativeIndex < 0) return;
+    setEditor({ rowId: parsed.rowId, index, value, shiftId: parsed.shiftId, nativeIndex });
+  }
+
   function saveCell() {
     if (!editor || draft) return;
-    board.replace(setCell(state, editor.rowId, editor.index, editor.value));
+    board.replace(setCell(state, editor.rowId, editor.nativeIndex, editor.value, editor.shiftId));
     setEditor(null);
   }
 
@@ -356,6 +376,9 @@ export function StaffingScreen() {
       </section>
 
       <p className="shortage" data-testid="shortage">{advice.text}</p>
+      <p className="overlap-note" data-testid="overlap-shifts">
+        同時段 {overlap.shifts.join("、")}。{state.now} 仍在崗：{activeNow.length ? activeNow.join("、") : "沒有更"}
+      </p>
       {(hint || board.notice) && <p className="board-notice px-4 py-2 text-sm">{hint || board.notice}</p>}
       {extreme && (
         <p className="extreme-banner" data-testid="extreme-banner">
@@ -385,8 +408,8 @@ export function StaffingScreen() {
             <NowFloor
               shown={shown}
               rows={liveRows}
-              slots={slots}
               slotAt={slotAt}
+              clockNote={slotAt >= 0 ? `這一格 ${nativeSlots[slotAt]}。點人再點空崗，即可對調。` : `${state.now} 不在 ${staffing.shiftId}。仍在崗：${activeNow.join("、") || "沒有更"}`}
               selectedId={selectedId}
               selectedPostId={selectedPostId}
               onSelectPost={(postId) => setSelectedPostId(postId)}
@@ -394,9 +417,9 @@ export function StaffingScreen() {
               onPlace={place}
             />
           ) : narrow ? (
-            <StaffCards rows={rows} slots={slots} issues={issues.map((issue) => issue.message)} onEdit={(rowId, index, value) => setEditor({ rowId, index, value })} onSelect={setSelectedId} selectedId={selectedId} />
+            <StaffCards rows={rows} slots={slots} issues={issues.map((issue) => issue.message)} onEdit={openEditor} onSelect={setSelectedId} selectedId={selectedId} />
           ) : (
-            <RosterTable rows={rows} slots={slots} issues={issues.map((issue) => issue.message)} onEdit={(rowId, index, value) => setEditor({ rowId, index, value })} onSelect={setSelectedId} selectedId={selectedId} />
+            <RosterTable rows={rows} slots={slots} issues={issues.map((issue) => issue.message)} onEdit={openEditor} onSelect={setSelectedId} selectedId={selectedId} />
           )}
         </main>
         {!narrow && <aside className="v10-side">{settings}</aside>}
@@ -531,8 +554,8 @@ export function StaffingScreen() {
 function NowFloor({
   shown,
   rows,
-  slots,
   slotAt,
+  clockNote,
   selectedId,
   selectedPostId,
   onSelectPost,
@@ -541,8 +564,8 @@ function NowFloor({
 }: {
   shown: ReturnType<typeof projectBoard>;
   rows: RosterRow[];
-  slots: string[];
   slotAt: number;
+  clockNote: string;
   selectedId: string | null;
   selectedPostId: string | null;
   onSelectPost: (id: string) => void;
@@ -551,6 +574,7 @@ function NowFloor({
 }) {
   const resting = shown.staff.filter((person) => nowPlace(shown, person) === "mb" || nowPlace(shown, person) === "r");
   const away = shown.staff.filter((person) => nowPlace(shown, person) === "sl" || nowPlace(shown, person) === "uvl");
+  const stillOn = shown.staff.filter((person) => person.id.startsWith("ov:") && nowPlace(shown, person) === "stand" && !shown.posts.some((post) => post.assigneeId === person.id));
   const outgoing = slotAt < 0 ? [] : rows.filter((row) => isLoanMarker(row.cells[slotAt] ?? ""));
   return (
     <div className="now-wrap" data-testid="floor-board">
@@ -581,6 +605,18 @@ function NowFloor({
           </div>
         </section>
       ))}
+      {stillOn.length > 0 && (
+        <section data-testid="other-shifts-on-duty">
+          <h2>其他更仍在崗</h2>
+          <div className="chip-row">
+            {stillOn.map((person) => (
+              <button key={person.id} type="button" className="person-chip is-onduty" onClick={() => onSelectPerson(person.id)}>
+                {person.code}{person.dutyPost ? ` · ${person.dutyPost}` : ""}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       <section>
         <h2>休息</h2>
         <div className="chip-row">
@@ -604,7 +640,7 @@ function NowFloor({
           </div>
         </section>
       )}
-      <p className="hint-line">{slots[slotAt] ? `這一格 ${slots[slotAt]}。點人再點空崗，即可對調。` : "現場時刻不在這一更。"}</p>
+      <p className="hint-line">{clockNote}</p>
     </div>
   );
 }
@@ -635,10 +671,10 @@ function RosterTable({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.id} className={selectedId === row.id ? "is-selected" : ""}>
+            <tr key={row.id} className={rowMatches(row.id, selectedId) ? "is-selected" : ""}>
               <th>
                 <button type="button" onClick={() => onSelect(row.id)}>
-                  {issues.some((issue) => issue.startsWith(`${row.code} `)) && <span className="dot" />}
+                  {issues.some((issue) => mentionsCode(row.code, issue)) && <span className="dot" />}
                   {row.id.startsWith("loan:") && <span className="loan-in">借</span>}
                   {row.code}
                 </button>
@@ -676,9 +712,9 @@ function StaffCards({
   return (
     <div className="staff-cards" data-testid="staff-cards">
       {rows.map((row) => {
-        const problem = issues.find((issue) => issue.startsWith(`${row.code} `));
+        const problem = issues.find((issue) => mentionsCode(row.code, issue));
         return (
-          <article key={row.id} className={selectedId === row.id ? "is-selected" : ""}>
+          <article key={row.id} className={rowMatches(row.id, selectedId) ? "is-selected" : ""}>
             <header>
               <button type="button" onClick={() => onSelect(row.id)}>
                 {problem && <span className="dot" />}
@@ -932,6 +968,30 @@ function EarlyDialog({
       </form>
     </dialog>
   );
+}
+
+const SHIFT_CODE = /^(?:E1|E3|E4|B2|B1|C2|E|A) /;
+
+function mentionsCode(code: string, issue: string) {
+  const native = code.replace(SHIFT_CODE, "");
+  return issue.startsWith(`${code} `) || issue.startsWith(`${native} `);
+}
+
+function rowMatches(rowId: string, selectedId: string | null) {
+  if (!selectedId) return false;
+  if (rowId === selectedId) return true;
+  const row = parseOverlapRowId(rowId);
+  const selected = parseOverlapRowId(selectedId);
+  if (row && row.rowId === selectedId) return true;
+  if (selected && selected.rowId === rowId) return true;
+  return Boolean(row && selected && row.shiftId === selected.shiftId && row.rowId === selected.rowId);
+}
+
+function editableRow(row: RosterRow | null, shiftId: ShiftId): RosterRow | null {
+  if (!row) return null;
+  const parsed = parseOverlapRowId(row.id);
+  if (!parsed || parsed.shiftId !== shiftId || parsed.rowId.startsWith("loan:")) return null;
+  return { ...row, id: parsed.rowId };
 }
 
 function cellTone(value: string) {

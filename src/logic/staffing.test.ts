@@ -5,7 +5,9 @@ import {
   apcPosts,
   applyEarlyLeave,
   awayHours,
+  bookKey,
   checkRoster,
+  combinedRoster,
   createDefaultStaffing,
   createLoan,
   crewFor,
@@ -19,6 +21,8 @@ import {
   openPostCodes,
   previewFilename,
   projectBoard,
+  setCell,
+  shiftsActiveAt,
   siteOverview,
   requiredCrew,
   revokeLoan,
@@ -98,18 +102,24 @@ describe("capacity and crew", () => {
 
 describe("office focus", () => {
   it("counts only the selected office in the top bar", () => {
-    const state = { ...board(), now: "13:10" };
+    const state = { ...board(), now: "13:15" };
     const hall = officeFocus(state, "arr-hall");
     const kiosk = officeFocus(state, "arr-kiosk");
+    expect(shiftsActiveAt("13:15")).toEqual(["B1", "C2", "E1"]);
     expect(hall?.label).toBe("Arr Hall");
     expect(hall?.total).toBe(40);
-    expect(hall?.filled).toBe(40);
-    expect(hall?.onSite).toBe(52);
+    expect(hall?.filled).toBeGreaterThan(0);
+    expect(hall?.filled).toBeLessThanOrEqual(40);
+    expect(hall?.onSite).toBeGreaterThan(0);
     expect(kiosk?.total).toBe(12);
+    expect(kiosk?.onSite).toBeGreaterThan(0);
     expect(kiosk?.onSite).toBeLessThan(hall!.onSite);
     const site = siteOverview(state);
     expect(site.total).toBe(104);
     expect(site.onSite).toBeGreaterThan(hall!.onSite);
+    const overlapping = officeFocus({ ...board(), now: "13:10" }, "arr-hall");
+    expect(shiftsActiveAt("13:10")).toEqual(["B2", "B1", "C2", "E1"]);
+    expect(overlapping?.onSite).toBeGreaterThan(52);
   });
 });
 
@@ -372,16 +382,100 @@ describe("generated roster posts", () => {
   });
 });
 
+describe("overlapping shifts", () => {
+  it("keeps B1 and C2 on the timeline after B2 ends at 13:15", () => {
+    const staffing = {
+      ...createDefaultStaffing(),
+      counters: 2,
+      apc: 1,
+      kiosks: 1,
+      books: {},
+      percent: null,
+    };
+    const roster = combinedRoster(staffing, "preview");
+    expect(roster.shifts).toEqual(["B2", "B1", "C2", "E1", "A"]);
+    expect(roster.slots[0]).toBe("06:30");
+    const at1245 = roster.slots.indexOf("12:45");
+    const at1315 = roster.slots.indexOf("13:15");
+    const b2 = roster.rows.filter((row) => row.code.startsWith("B2 "));
+    const b1 = roster.rows.filter((row) => row.code.startsWith("B1 "));
+    expect(at1245).toBeGreaterThanOrEqual(0);
+    expect(at1315).toBeGreaterThan(at1245);
+    expect(b2.some((row) => row.cells[at1245])).toBe(true);
+    expect(b2.every((row) => row.cells[at1315] === "")).toBe(true);
+    expect(b1.some((row) => row.cells[at1315] && !isRestCode(row.cells[at1315] ?? ""))).toBe(true);
+    expect(roster.rows.some((row) => row.code.startsWith("C2 ") && row.cells[at1315])).toBe(true);
+  });
+
+  it("shows B1 and C2 still working at 13:15, and labels only meal breaks as MB", () => {
+    const later = projectBoard({ ...board(), now: "13:15" });
+    expect(later.staff.some((person) => person.shift === "B2")).toBe(false);
+    expect(later.staff.some((person) => person.shift === "B1")).toBe(true);
+    expect(later.staff.some((person) => person.shift === "C2")).toBe(true);
+    expect(later.staff.some((person) => person.shift === "E1")).toBe(true);
+    expect(later.staff.every((person) => /^(B1|C2|E1) /.test(person.code))).toBe(true);
+
+    const meal = projectBoard({ ...board(), now: "11:15" });
+    expect(meal.staff.some((person) => person.shift === "B1" && person.breakStart === "11:15" && person.breakEnd === "11:45")).toBe(true);
+    expect(meal.staff.some((person) => person.shift === "B2" && !person.breakStart && !person.dutyPost && !person.leaveEarlyAt)).toBe(true);
+  });
+
+  it("writes a one-hour MB and keeps ordinary rests as R", () => {
+    const staffing = { counters: 2, apc: 1, kiosks: 1, rules: defaultRules("B1") };
+    const slots = slotStarts("B1");
+    const rows = generateRoster("arr-hall", "B1", staffing, false);
+    const mealSlots = slots.filter((slot) => slot === "11:15" || slot === "11:45");
+    expect(mealSlots).toEqual(["11:15", "11:45"]);
+    expect(mealSlots.length * 30).toBe(60);
+    for (const row of rows) {
+      for (const slot of mealSlots) expect(row.cells[slots.indexOf(slot)]).toBe("MB");
+      expect(row.cells.includes("R")).toBe(true);
+    }
+  });
+
+  it("edits another shift's cell without changing the selected shift", () => {
+    const state = board();
+    const next = setCell(state, "arr-hall:K1", 0, "MB", "B1");
+    expect(next.staffing?.shiftId).toBe("B2");
+    const key = bookKey("arr-hall", "B1", 30, 10, 12);
+    expect(next.staffing?.books[key]?.find((row) => row.id === "arr-hall:K1")?.cells[0]).toBe("MB");
+    expect(state.staffing?.books[bookKey("arr-hall", "B2", 30, 10, 12)]?.find((row) => row.code === "K1")?.cells[0]).toBe("R");
+  });
+});
+
 describe("preview workbook", () => {
-  it("writes an xlsx with orange rest cells", async () => {
+  it("writes an xlsx with orange rest cells on the overlapping timeline", async () => {
     const buffer = await buildPreviewWorkbook(createDefaultStaffing());
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(buffer as ExcelJS.Buffer);
     const sheet = workbook.getWorksheet("preview");
     expect(sheet?.getRow(1).getCell(1).value).toBe("員工");
-    expect(sheet?.getRow(2).getCell(1).value).toBe("K1");
-    const rest = sheet?.getRow(2).getCell(2);
+    expect(sheet?.getRow(2).getCell(1).value).toBe("B2 K1");
+    let restCol = 0;
+    sheet?.getRow(1).eachCell((cell, col) => {
+      if (cell.value === "06:45") restCol = col;
+    });
+    const rest = sheet?.getRow(2).getCell(restCol);
     expect(rest?.value).toBe("R");
     expect(rest?.fill && "fgColor" in rest.fill ? rest.fill.fgColor?.argb : "").toBe("FFF4B183");
+  });
+
+  it("paints B1 meal cells as MB", async () => {
+    const staffing = { ...createDefaultStaffing(), shiftId: "B1" as const, rules: defaultRules("B1"), books: {} };
+    const buffer = await buildPreviewWorkbook(staffing);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as ExcelJS.Buffer);
+    const sheet = workbook.getWorksheet("preview");
+    let mealCol = 0;
+    sheet?.getRow(1).eachCell((cell, col) => {
+      if (cell.value === "11:15") mealCol = col;
+    });
+    let meal: ExcelJS.Cell | undefined;
+    sheet?.eachRow((row, index) => {
+      if (index === 1 || meal) return;
+      if (String(row.getCell(1).value ?? "").startsWith("B1 ") && row.getCell(mealCol).value === "MB") meal = row.getCell(mealCol);
+    });
+    expect(meal?.value).toBe("MB");
+    expect(meal?.fill && "fgColor" in meal.fill ? meal.fill.fgColor?.argb : "").toBe("FFF8CBAD");
   });
 });

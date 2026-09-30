@@ -1,5 +1,5 @@
 import ExcelJS from "exceljs";
-import { EARLY_CELL, isLoanMarker, isRestCode, previewFilename, rosterRows, slotStarts } from "@/logic/staffing";
+import { EARLY_CELL, combinedRoster, isLoanMarker, isRestCode, previewFilename } from "@/logic/staffing";
 import type { RosterRow, StaffingState } from "@/types";
 
 const ORANGE = "FFF4B183";
@@ -9,16 +9,18 @@ const INK = "FF1A1D23";
 const HEADER = "FF1A1D23";
 const LOAN = "FFE7E9EE";
 
-export async function buildPreviewWorkbook(staffing: StaffingState, rows: RosterRow[] = rosterRows(staffing, staffing.officeId)) {
+export async function buildPreviewWorkbook(staffing: StaffingState, rows?: RosterRow[]) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "渣板";
   workbook.title = previewFilename(staffing);
   workbook.description = "草稿預覽，未當正式更表";
   const sheet = workbook.addWorksheet("preview");
-  const slots = slotStarts(staffing.shiftId);
+  const combined = combinedRoster(staffing, "preview");
+  const slots = combined.slots;
+  const body = rows ?? combined.rows;
   sheet.addRow(["員工", ...slots, "在崗", "R"]);
   styleHeader(sheet.getRow(1));
-  for (const row of rows) {
+  for (const row of body) {
     const onDuty = row.cells.filter((cell) => cell && !isRestCode(cell) && !isLoanMarker(cell)).length;
     const rests = row.cells.filter((cell) => cell === "R").length;
     const added = sheet.addRow([row.code, ...row.cells, onDuty, rests]);

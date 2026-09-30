@@ -62,6 +62,37 @@ export function shiftOf(id: ShiftId) {
   return SHIFTS.find((shift) => shift.id === id) ?? SHIFTS[0];
 }
 
+export function shiftsOverlap(left: ShiftId, right: ShiftId) {
+  const a = shiftOf(left);
+  const b = shiftOf(right);
+  return timeToMinutes(a.start) < timeToMinutes(b.end) && timeToMinutes(b.start) < timeToMinutes(a.end);
+}
+
+/** Shifts whose duty window overlaps this shift, including itself. */
+export function shiftsOverlapping(shiftId: ShiftId): ShiftId[] {
+  return SHIFTS.map((shift) => shift.id).filter((id) => shiftsOverlap(shiftId, id));
+}
+
+/** Shifts still on duty at this clock time. End is exclusive, so 13:15 drops B2. */
+export function shiftsActiveAt(now: string): ShiftId[] {
+  const minute = timeToMinutes(now);
+  return SHIFTS.filter((shift) => minute >= timeToMinutes(shift.start) && minute < timeToMinutes(shift.end)).map((shift) => shift.id);
+}
+
+export function overlapRowId(shiftId: ShiftId, rowId: string) {
+  return `ov:${shiftId}:${rowId}`;
+}
+
+export function parseOverlapRowId(id: string): { shiftId: ShiftId; rowId: string } | null {
+  if (!id.startsWith("ov:")) return null;
+  const rest = id.slice(3);
+  const split = rest.indexOf(":");
+  if (split < 0) return null;
+  const shiftId = rest.slice(0, split);
+  if (!SHIFTS.some((shift) => shift.id === shiftId)) return null;
+  return { shiftId: shiftId as ShiftId, rowId: rest.slice(split + 1) };
+}
+
 export function officeLabel(id: OfficeId) {
   return officeOf(id).label;
 }
@@ -336,10 +367,11 @@ export function setRowAllows(state: BoardState, rowId: string, allows: PostKind[
   return { ...state, staffing: { ...withBook(staffing, staffing.officeId, staffing.shiftId, rows), loans } };
 }
 
-export function setCell(state: BoardState, rowId: string, slotIndex: number, value: string): BoardState {
+export function setCell(state: BoardState, rowId: string, slotIndex: number, value: string, shiftId?: ShiftId): BoardState {
   if (!state.staffing) return state;
   const staffing = state.staffing;
   const next = value.trim();
+  const targetShift = shiftId ?? staffing.shiftId;
   if (rowId.startsWith("loan:")) {
     const loans = staffing.loans.map((loan) => {
       if (`loan:${loan.id}` !== rowId) return loan;
@@ -349,14 +381,16 @@ export function setCell(state: BoardState, rowId: string, slotIndex: number, val
     });
     return { ...state, staffing: { ...staffing, loans } };
   }
-  const rows = activeRows(staffing).map((row) => {
+  const view = { ...staffing, shiftId: targetShift };
+  const rows = activeRows(view).map((row) => {
     if (row.id !== rowId) return row;
     if (isLoanMarker(row.cells[slotIndex] ?? "")) return row;
     const cells = row.cells.slice();
     cells[slotIndex] = next;
     return { ...row, cells };
   });
-  return { ...state, staffing: withBook(staffing, staffing.officeId, staffing.shiftId, rows) };
+  const booked = withBook(view, view.officeId, targetShift, rows);
+  return { ...state, staffing: { ...booked, shiftId: staffing.shiftId } };
 }
 
 export function createLoan(
@@ -700,14 +734,52 @@ export function rosterRows(staffing: StaffingState, officeId: OfficeId) {
   return local;
 }
 
+export function shiftRoster(staffing: StaffingState, shiftId: ShiftId, source: "stored" | "preview") {
+  const key = bookKey(staffing.officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+  const stored = staffing.books[key];
+  const anchor = shiftId === staffing.shiftId;
+  let rows: RosterRow[];
+  if (source === "preview" && anchor) {
+    rows = generateRoster(staffing.officeId, shiftId, {
+      counters: staffing.counters,
+      apc: staffing.apc,
+      kiosks: staffing.kiosks,
+      rules: staffing.rules,
+    }, !isExtreme(staffing.rules, shiftId));
+  } else if (stored) {
+    rows = stored;
+  } else {
+    const rules = anchor ? staffing.rules : defaultRules(shiftId);
+    rows = generateRoster(staffing.officeId, shiftId, {
+      counters: staffing.counters,
+      apc: staffing.apc,
+      kiosks: staffing.kiosks,
+      rules,
+    }, anchor ? !isExtreme(rules, shiftId) : true);
+  }
+  const local = rows.map((row) => ({ ...row, allows: row.allows.slice(), cells: row.cells.slice() }));
+  const incoming = staffing.loans.filter((loan) => loan.toOffice === staffing.officeId && loan.shiftId === shiftId);
+  for (const loan of incoming) {
+    local.push({
+      id: `loan:${loan.id}`,
+      code: loan.personCode,
+      allows: loan.allows,
+      cells: loan.cells.slice(),
+    });
+  }
+  return local;
+}
+
 export function projectBoard(state: BoardState): BoardState {
   if (!state.staffing) return state;
   const staffing = state.staffing;
-  const slots = slotStarts(staffing.shiftId);
-  const index = slotIndexAt(slots, state.now);
-  const shift = shiftOf(staffing.shiftId);
+  const active = shiftsActiveAt(state.now);
+  const shifts = active.length ? active : [staffing.shiftId];
+  const ordered = [
+    ...shifts.filter((id) => id === staffing.shiftId),
+    ...shifts.filter((id) => id !== staffing.shiftId),
+  ];
   const codes = codesAt(staffing, staffing.officeId, state.now);
-  const rows = rosterRows(staffing, staffing.officeId);
   const posts: Post[] = codes.map((code, order) => ({
     id: `post-${code.replace(/\s+/g, "-")}`,
     zoneId: postKind(code) === "apc" ? "apc" : postKind(code) === "kiosk" ? "kiosk" : "counter",
@@ -717,22 +789,32 @@ export function projectBoard(state: BoardState): BoardState {
     assigneeId: null,
   }));
   const staff: Staff[] = [];
-  if (index >= 0) {
+  for (const shiftId of ordered) {
+    const shift = shiftOf(shiftId);
+    const slots = slotStarts(shiftId);
+    const index = slotIndexAt(slots, state.now);
+    if (index < 0) continue;
     const slotStart = slots[index] ?? shift.start;
     const slotEnd = formatMinute(timeToMinutes(slotStart) + SLOT_MINUTES);
-    rows.forEach((row, order) => {
+    const selected = shiftId === staffing.shiftId;
+    shiftRoster(staffing, shiftId, "stored").forEach((row, order) => {
       const cell = row.cells[index] ?? "";
       if (!cell || isLoanMarker(cell)) return;
-      const person = personFromRow(row, order, shift, staffing.shiftId);
+      const person = personFromRow(row, order, shift, shiftId);
+      if (!selected) {
+        person.id = overlapRowId(shiftId, row.id);
+        person.code = `${shiftId} ${row.code}`;
+      }
       if (cell === EARLY_CELL) {
         person.leaveEarlyAt = row.leaveEarlyAt ?? slotStart;
         staff.push(person);
         return;
       }
-      if (isRestCode(cell)) {
+      if (cell === "MB") {
         person.breakStart = slotStart;
         person.breakEnd = slotEnd;
-      } else {
+      } else if (!isRestCode(cell)) {
+        person.dutyPost = cell;
         const post = posts.find((item) => item.name === cell && !item.assigneeId);
         if (post) post.assigneeId = person.id;
       }
@@ -794,8 +876,51 @@ export function absorbShown(base: BoardState, shown: BoardState): BoardState {
   };
 }
 
+export type OverlapRoster = {
+  slots: string[];
+  shifts: ShiftId[];
+  rows: RosterRow[];
+};
+
+/** Anchor shift plus every shift whose window overlaps it, aligned on one timeline. */
+export function combinedRoster(staffing: StaffingState, source: "stored" | "preview" = "stored"): OverlapRoster {
+  const shifts = shiftsOverlapping(staffing.shiftId);
+  const anchorStart = timeToMinutes(shiftOf(staffing.shiftId).start);
+  const latestEnd = Math.max(...shifts.map((id) => timeToMinutes(shiftOf(id).end)));
+  const slotSet = new Set<string>();
+  for (const id of shifts) {
+    for (const slot of slotStarts(id)) {
+      const minute = timeToMinutes(slot);
+      if (minute + SLOT_MINUTES <= anchorStart) continue;
+      if (minute >= latestEnd) continue;
+      slotSet.add(slot);
+    }
+  }
+  const slots = [...slotSet].sort((left, right) => timeToMinutes(left) - timeToMinutes(right));
+  const rows: RosterRow[] = [];
+  for (const shiftId of shifts) {
+    const nativeSlots = slotStarts(shiftId);
+    for (const row of shiftRoster(staffing, shiftId, source)) {
+      const cells = slots.map((slot) => {
+        const index = nativeSlots.indexOf(slot);
+        return index < 0 ? "" : (row.cells[index] ?? "");
+      });
+      rows.push({
+        id: overlapRowId(shiftId, row.id),
+        code: `${shiftId} ${row.code}`,
+        allows: row.allows.slice(),
+        cells,
+        leaveEarlyAt: row.leaveEarlyAt,
+        returnLateAt: row.returnLateAt,
+        restLocked: row.restLocked,
+      });
+    }
+  }
+  return { slots, shifts, rows };
+}
+
 export function previewRows(staffing: StaffingState) {
-  return generateRoster(staffing.officeId, staffing.shiftId, staffing, !isExtreme(staffing.rules, staffing.shiftId));
+  return combinedRoster(staffing, "preview").rows;
 }
 
 export function previewFilename(staffing: StaffingState) {

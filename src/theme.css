@@ -793,7 +793,8 @@ select {
 
 .ops-crew-meta span,
 .hint-line,
-.shortage {
+.shortage,
+.overlap-note {
   color: var(--ink-secondary, #5c6370);
   font-size: 13px;
 }
@@ -803,6 +804,7 @@ select {
 }
 
 .shortage,
+.overlap-note,
 .extreme-banner,
 .draft-banner,
 .issue-list {
