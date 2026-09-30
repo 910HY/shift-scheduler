@@ -177,7 +177,10 @@ export function StaffingScreen() {
       onAllows={(allows) => selected && board.replace(setRowAllows(state, selected.id, allows))}
       onOpenLoan={() => setLoanOpen(true)}
       onOpenEarly={() => setEarlyOpen(true)}
-      onRevoke={(id) => board.replace(revokeLoan(state, id))}
+      onRevoke={(id) => {
+        board.replace(revokeLoan(state, id));
+        say("已撤銷借調。");
+      }}
       onLoanEnd={(id, end) => board.replace(setLoanEnd(state, id, end))}
       onCounts={(patch) => board.replace(setOpenCounts(state, patch))}
     />
@@ -540,6 +543,7 @@ export function StaffingScreen() {
       {earlyOpen && (
         <EarlyDialog
           rows={liveRows}
+          dutyById={new Map(shown.staff.flatMap((person) => person.dutyPost ? [[person.id, person.dutyPost] as const] : []))}
           currentOffice={staffing.officeId}
           onClose={() => setEarlyOpen(false)}
           onSubmit={(input) => {
@@ -679,7 +683,7 @@ function NowFloor({
         <section>
           <h2>不在本區崗</h2>
           <div className="chip-row">
-            {away.map((person) => <span key={person.id} className="person-chip is-away">{person.code} 早走</span>)}
+            {away.map((person) => <span key={person.id} className="person-chip is-away" data-testid="early-out">{person.code} 早走</span>)}
             {outgoing.map((row) => (
               <span key={row.id} className="person-chip is-loan" data-testid="loaned-out" title={row.cells[slotAt]}>
                 {row.code} 借出
@@ -982,16 +986,19 @@ function LoanDialog({
 
 function EarlyDialog({
   rows,
+  dutyById,
   currentOffice,
   onClose,
   onSubmit,
 }: {
   rows: RosterRow[];
+  dutyById: Map<string, string>;
   currentOffice: OfficeId;
   onClose: () => void;
   onSubmit: (input: { personId: string; at: string; strategy: "close" | "fill" | "borrow"; fromOffice?: OfficeId }) => void;
 }) {
-  const [personId, setPersonId] = useState(rows[0]?.id ?? "");
+  const people = rows.filter((row) => !row.id.startsWith("loan:"));
+  const [personId, setPersonId] = useState(people.find((row) => dutyById.has(row.id))?.id ?? people[0]?.id ?? "");
   const [at, setAt] = useState("10:00");
   const [strategy, setStrategy] = useState<"close" | "fill" | "borrow">("close");
   const [fromOffice, setFromOffice] = useState<OfficeId>(OFFICES.find((office) => office.id !== currentOffice)?.id ?? "dep-hall");
@@ -1005,16 +1012,18 @@ function EarlyDialog({
       >
         <h2>早走</h2>
         <label>員工
-          <select aria-label="早走員工" value={personId} onChange={(event) => setPersonId(event.target.value)}>
-            {rows.filter((row) => !row.id.startsWith("loan:")).map((row) => <option key={row.id} value={row.id}>{row.code}</option>)}
+          <select aria-label="早走員工" data-testid="early-person" value={personId} onChange={(event) => setPersonId(event.target.value)}>
+            {people.map((row) => (
+              <option key={row.id} value={row.id}>{row.code}{dutyById.get(row.id) ? ` · ${dutyById.get(row.id)}` : ""}</option>
+            ))}
           </select>
         </label>
         <label>由<input aria-label="早走時刻" type="time" value={at} onChange={(event) => setAt(event.target.value)} /></label>
         <fieldset>
           <legend>空崗點處理</legend>
-          <label className="check-row"><input type="radio" name="strategy" checked={strategy === "close"} onChange={() => setStrategy("close")} />減開崗位</label>
-          <label className="check-row"><input type="radio" name="strategy" checked={strategy === "fill"} onChange={() => setStrategy("fill")} />其餘員工 fill</label>
-          <label className="check-row"><input type="radio" name="strategy" checked={strategy === "borrow"} onChange={() => setStrategy("borrow")} />向外 office 借人</label>
+          <label className="check-row"><input type="radio" name="strategy" data-testid="early-strategy-close" checked={strategy === "close"} onChange={() => setStrategy("close")} />減開崗位</label>
+          <label className="check-row"><input type="radio" name="strategy" data-testid="early-strategy-fill" checked={strategy === "fill"} onChange={() => setStrategy("fill")} />其餘員工 fill</label>
+          <label className="check-row"><input type="radio" name="strategy" data-testid="early-strategy-borrow" checked={strategy === "borrow"} onChange={() => setStrategy("borrow")} />向外 office 借人</label>
         </fieldset>
         {strategy === "borrow" && (
           <label>向
@@ -1024,7 +1033,7 @@ function EarlyDialog({
           </label>
         )}
         <div className="quick-row">
-          <Button type="submit">確認早走</Button>
+          <Button type="submit" data-testid="early-confirm">確認早走</Button>
           <Button type="button" variant="outline" onClick={onClose}>取消</Button>
         </div>
       </form>
