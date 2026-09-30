@@ -433,6 +433,71 @@ describe("overlapping shifts", () => {
     }
   });
 
+  it("shares one counter pool across B1 and B2", () => {
+    const staffing = {
+      ...createDefaultStaffing(),
+      counters: 10,
+      apc: 0,
+      kiosks: 0,
+      books: {},
+      percent: null,
+    };
+    const roster = combinedRoster(staffing, "preview");
+    const used = postsAt(roster, "09:15");
+    expect(used.size).toBeGreaterThan(0);
+    expect(used.size).toBeLessThanOrEqual(10);
+    for (const names of used.values()) expect(names).toHaveLength(1);
+    const holders = [...used.values()].flat();
+    expect(holders.some((code) => code.startsWith("B2 "))).toBe(true);
+    expect(holders.some((code) => code.startsWith("B1 "))).toBe(true);
+    const shown = projectBoard({
+      ...board(),
+      now: "09:15",
+      staffing,
+    });
+    expect(shown.posts).toHaveLength(10);
+    const duty = shown.staff.map((person) => person.dutyPost).filter((post): post is string => Boolean(post));
+    expect(new Set(duty).size).toBe(duty.length);
+    expect(duty.length).toBeLessThanOrEqual(10);
+  });
+
+  it("lets C2 take a shared post while an earlier shift is on MB", () => {
+    const staffing = {
+      ...createDefaultStaffing(),
+      counters: 10,
+      apc: 0,
+      kiosks: 0,
+      books: {},
+      percent: null,
+    };
+    const roster = combinedRoster(staffing, "preview");
+    const at = roster.slots.indexOf("11:15");
+    const b1 = roster.rows.filter((row) => row.code.startsWith("B1 "));
+    expect(b1.some((row) => row.cells[at] === "MB")).toBe(true);
+    expect(b1.some((row) => row.cells[at] !== "MB")).toBe(true);
+    for (const row of b1) {
+      const meals: string[] = [];
+      roster.slots.forEach((slot, index) => {
+        if (row.cells[index] === "MB") meals.push(slot);
+      });
+      expect(meals).toHaveLength(2);
+      expect(meals[1]).toBe(addHalfHour(meals[0] ?? ""));
+    }
+    expect(roster.rows.some((row) => row.code.startsWith("C2 ") && row.cells[at] && !isRestCode(row.cells[at] ?? ""))).toBe(true);
+    const used = postsAt(roster, "11:15");
+    expect(used.size).toBeLessThanOrEqual(10);
+    for (const names of used.values()) expect(names).toHaveLength(1);
+    const later = postsAt(roster, "13:15");
+    expect(later.size).toBeLessThanOrEqual(10);
+    expect([...later.values()].flat().some((code) => code.startsWith("B2 "))).toBe(false);
+    const floor = projectBoard({ ...board(), now: "11:15", staffing });
+    expect(floor.staff.some((person) => person.shift === "B1" && person.breakStart === "11:15")).toBe(true);
+    expect(floor.staff.some((person) => person.shift === "C2" && person.dutyPost)).toBe(true);
+    const duty = floor.staff.map((person) => person.dutyPost).filter((post): post is string => Boolean(post));
+    expect(new Set(duty).size).toBe(duty.length);
+    expect(duty.length).toBeLessThanOrEqual(10);
+  });
+
   it("edits another shift's cell without changing the selected shift", () => {
     const state = board();
     const next = setCell(state, "arr-hall:K1", 0, "MB", "B1");
@@ -443,6 +508,25 @@ describe("overlapping shifts", () => {
   });
 });
 
+function postsAt(roster: { slots: string[]; rows: { code: string; cells: string[] }[] }, slot: string) {
+  const index = roster.slots.indexOf(slot);
+  const used = new Map<string, string[]>();
+  for (const row of roster.rows) {
+    const cell = row.cells[index] ?? "";
+    if (!cell || isRestCode(cell)) continue;
+    const names = used.get(cell) ?? [];
+    names.push(row.code);
+    used.set(cell, names);
+  }
+  return used;
+}
+
+function addHalfHour(slot: string) {
+  const [hour, minute] = slot.split(":").map(Number);
+  const total = (hour ?? 0) * 60 + (minute ?? 0) + 30;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
 describe("preview workbook", () => {
   it("writes an xlsx with orange rest cells on the overlapping timeline", async () => {
     const buffer = await buildPreviewWorkbook(createDefaultStaffing());
@@ -451,13 +535,29 @@ describe("preview workbook", () => {
     const sheet = workbook.getWorksheet("preview");
     expect(sheet?.getRow(1).getCell(1).value).toBe("員工");
     expect(sheet?.getRow(2).getCell(1).value).toBe("B2 K1");
-    let restCol = 0;
-    sheet?.getRow(1).eachCell((cell, col) => {
-      if (cell.value === "06:45") restCol = col;
+    let rest: ExcelJS.Cell | undefined;
+    sheet?.eachRow((row, index) => {
+      if (index === 1 || rest) return;
+      row.eachCell((cell, col) => {
+        if (col === 1 || rest) return;
+        if (cell.value === "R") rest = cell;
+      });
     });
-    const rest = sheet?.getRow(2).getCell(restCol);
     expect(rest?.value).toBe("R");
     expect(rest?.fill && "fgColor" in rest.fill ? rest.fill.fgColor?.argb : "").toBe("FFF4B183");
+    let at = 0;
+    sheet?.getRow(1).eachCell((cell, col) => {
+      if (cell.value === "09:15") at = col;
+    });
+    const used = new Map<string, number>();
+    sheet?.eachRow((row, index) => {
+      if (index === 1) return;
+      const value = String(row.getCell(at).value ?? "");
+      if (!value || isRestCode(value)) return;
+      used.set(value, (used.get(value) ?? 0) + 1);
+    });
+    expect(used.size).toBeLessThanOrEqual(40);
+    for (const count of used.values()) expect(count).toBe(1);
   });
 
   it("paints B1 meal cells as MB", async () => {
