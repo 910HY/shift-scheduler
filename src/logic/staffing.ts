@@ -369,6 +369,20 @@ export function setOpenCounts(state: BoardState, patch: Partial<Pick<StaffingSta
   return { ...state, staffing: { ...state.staffing, ...patch, percent: null } };
 }
 
+/** Temporary open posts on top of the current counts. A percent shortcut still returns to the baseline. */
+export function addOpenPosts(state: BoardState, kind: PostKind, count = 1): BoardState {
+  if (!state.staffing) return state;
+  const step = Math.min(2, Math.max(1, Math.round(count)));
+  const staffing = state.staffing;
+  const hall = officeOf(staffing.officeId).kind === "hall";
+  if (hall && kind === "kiosk") return state;
+  if (!hall && kind !== "kiosk") return state;
+  const cap = 99;
+  if (kind === "counter") return setOpenCounts(state, { counters: Math.min(cap, staffing.counters + step) });
+  if (kind === "apc") return setOpenCounts(state, { apc: Math.min(cap, staffing.apc + step) });
+  return setOpenCounts(state, { kiosks: Math.min(cap, staffing.kiosks + step) });
+}
+
 export function setRules(state: BoardState, rules: RuleSettings): BoardState {
   if (!state.staffing) return state;
   return { ...state, staffing: { ...state.staffing, rules } };

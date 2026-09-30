@@ -9,6 +9,7 @@ import {
   PERCENT_SHORTCUTS,
   SHIFTS,
   absorbShown,
+  addOpenPosts,
   apcPosts,
   applyEarlyLeave,
   bookKey,
@@ -104,6 +105,11 @@ export function StaffingScreen() {
 
   function say(text: string) {
     setHint(text);
+  }
+
+  function addPosts(kind: PostKind, count: number) {
+    board.replace(addOpenPosts(state, kind, count));
+    setDraft(null);
   }
 
   async function downloadPreview() {
@@ -344,6 +350,20 @@ export function StaffingScreen() {
                 }}
               />
             </label>
+          )}
+        </div>
+        <div className="ops-add-posts span-2" role="group" aria-label="臨時加崗位">
+          {officeOf(staffing.officeId).kind === "hall" ? (
+            <>
+              <button type="button" data-testid="add-counter" onClick={() => addPosts("counter", 1)}>+1 櫃位</button>
+              <button type="button" data-testid="add-counters" onClick={() => addPosts("counter", 2)}>+2 櫃位</button>
+              <button type="button" data-testid="add-apc" onClick={() => addPosts("apc", 1)}>+1 APC</button>
+            </>
+          ) : (
+            <>
+              <button type="button" data-testid="add-kiosk" onClick={() => addPosts("kiosk", 1)}>+1 Kiosk</button>
+              <button type="button" data-testid="add-kiosks" onClick={() => addPosts("kiosk", 2)}>+2 Kiosk</button>
+            </>
           )}
         </div>
         <div className="ops-open-strip span-2">
