@@ -24,6 +24,7 @@ import {
   officeFocus,
   officeLabel,
   officeOf,
+  offClockWarning,
   openPostCodes,
   parseOverlapRowId,
   previewFilename,
@@ -95,6 +96,7 @@ export function StaffingScreen() {
   const issues = checkRoster(checkState).filter((issue) => issue.level === "error");
   const crew = crewFor(staffing);
   const advice = shortageAdvice(staffing, state.now);
+  const offClock = offClockWarning(state.now);
   const selectedSheet = rows.find((row) => rowMatches(row.id, selectedId)) ?? null;
   const selected = editableRow(selectedSheet, staffing.shiftId);
   const extreme = isExtreme(staffing.rules, staffing.shiftId);
@@ -376,6 +378,7 @@ export function StaffingScreen() {
       </section>
 
       <p className="shortage" data-testid="shortage">{advice.text}</p>
+      {offClock && <p className="off-clock" data-testid="off-clock">{offClock}</p>}
       <p className="overlap-note" data-testid="overlap-shifts">
         同時段 {overlap.shifts.join("、")}。崗位一個池。{state.now} 仍在崗：{activeNow.length ? activeNow.join("、") : "沒有更"}
       </p>
@@ -404,6 +407,7 @@ export function StaffingScreen() {
 
       <div className="v10-body">
         <main>
+          {offClock && <p className="off-clock-floor">{offClock}</p>}
           {view === "now" ? (
             <NowFloor
               shown={shown}

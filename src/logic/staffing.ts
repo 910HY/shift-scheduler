@@ -2,7 +2,7 @@ import hallCsv from "@/logic/fixtures/b2-arr-hall.csv?raw";
 import kioskCsv from "@/logic/fixtures/b2-arr-kiosk.csv?raw";
 import overnightCsv from "@/logic/fixtures/a-arr-kiosk.csv?raw";
 import { presenceTotals } from "@/logic/presence";
-import { timeToMinutes } from "@/logic/time";
+import { isWithinDuty, timeToMinutes } from "@/logic/time";
 import type {
   BoardState,
   OfficeId,
@@ -336,7 +336,14 @@ export function setShift(state: BoardState, shiftId: ShiftId): BoardState {
   if (!state.staffing) return state;
   const current = state.staffing;
   const rules = isExtreme(current.rules, current.shiftId) ? current.rules : defaultRules(shiftId);
-  return { ...state, shiftName: shiftId, staffing: { ...current, shiftId, rules } };
+  const now = shiftsActiveAt(state.now).includes(shiftId) ? state.now : shiftOf(shiftId).start;
+  return { ...state, now, shiftName: shiftId, staffing: { ...current, shiftId, rules } };
+}
+
+/** Clock sits in a gap no shift covers. On-site must stay 0; those people are not at rest. */
+export function offClockWarning(now: string) {
+  if (shiftsActiveAt(now).length > 0) return null;
+  return `${now} 冇任何更當值。在場係 0，呢班人唔會當休息計。`;
 }
 
 export function setPercent(state: BoardState, percent: number): BoardState {
@@ -490,6 +497,8 @@ export function setLoanEnd(state: BoardState, loanId: string, end: string | null
 }
 
 export function shortageAdvice(staffing: StaffingState, now: string) {
+  const offClock = offClockWarning(now);
+  if (offClock) return { missing: [] as string[], text: offClock };
   const slots = slotStarts(staffing.shiftId);
   const index = slotIndexAt(slots, now);
   if (index < 0) return { missing: [] as string[], text: "這一更未開始，未有在崗缺口。" };
@@ -774,10 +783,9 @@ export function projectBoard(state: BoardState): BoardState {
   if (!state.staffing) return state;
   const staffing = state.staffing;
   const active = shiftsActiveAt(state.now);
-  const shifts = active.length ? active : [staffing.shiftId];
   const ordered = [
-    ...shifts.filter((id) => id === staffing.shiftId),
-    ...shifts.filter((id) => id !== staffing.shiftId),
+    ...active.filter((id) => id === staffing.shiftId),
+    ...active.filter((id) => id !== staffing.shiftId),
   ];
   const codes = codesAt(staffing, staffing.officeId, state.now);
   const posts: Post[] = codes.map((code, order) => ({
@@ -802,6 +810,7 @@ export function projectBoard(state: BoardState): BoardState {
       const cell = row.cells[index] ?? "";
       if (!cell || isLoanMarker(cell)) return;
       const person = personFromRow(row, order, shift, shiftId);
+      if (!isWithinDuty(person, state.now)) return;
       if (!selected) {
         person.id = overlapRowId(shiftId, row.id);
         person.code = `${shiftId} ${row.code}`;
@@ -1005,15 +1014,17 @@ function buildShiftPlan(
   staffing: Pick<StaffingState, "counters" | "apc" | "kiosks" | "rules">,
   posts: string[],
   staggerMeals: boolean,
+  crewSize?: number,
 ): string[][] {
   const rules = staffing.rules;
   const slots = slotStarts(shiftId);
-  const crew = requiredCrew(posts.length, shiftOf(shiftId).hours, awayHours(shiftId, rules));
+  const crew = crewSize ?? requiredCrew(posts.length, shiftOf(shiftId).hours, awayHours(shiftId, rules));
+  const headcount = crewSize == null ? Math.max(crew, 1) : Math.max(0, crew);
   const restCount = shiftId === "A" ? rules.shortRestTurns : rules.restTurns;
   const rests = new Map<number, Set<number>>();
   for (let slot = 0; slot < slots.length; slot += 1) rests.set(slot, new Set());
   const plan: string[][] = [];
-  for (let person = 0; person < Math.max(crew, 1); person += 1) {
+  for (let person = 0; person < headcount; person += 1) {
     const cells = Array.from({ length: slots.length }, () => "");
     const meals = mealSpan(shiftId, slots, rules, person, staggerMeals);
     const restAt = pickRests(slots.length, restCount, meals, person, rests, posts.length);
@@ -1212,20 +1223,301 @@ type SharedWorker = {
 
 type Seat = { post: string; start: number; end: number };
 
-/** One post pool for the office. Overlapping shifts share it; a post is never doubled. */
-function officePlans(staffing: StaffingState, source: "stored" | "preview"): Map<ShiftId, RosterRow[]> {
-  const posts = openPostCodes(staffing.officeId, staffing);
+function rulesForShift(staffing: StaffingState, shiftId: ShiftId) {
+  return shiftId === staffing.shiftId ? staffing.rules : defaultRules(shiftId);
+}
+
+const slotsMemo = new Map<ShiftId, string[]>();
+const coverCache = new Map<string, Map<ShiftId, string[][]>>();
+
+function memoSlots(shiftId: ShiftId) {
+  const known = slotsMemo.get(shiftId);
+  if (known) return known;
+  const slots = slotStarts(shiftId);
+  slotsMemo.set(shiftId, slots);
+  return slots;
+}
+
+function slotIndexCovering(slots: string[], minute: number) {
+  for (let index = 0; index < slots.length; index += 1) {
+    const start = timeToMinutes(slots[index] ?? "");
+    if (minute >= start && minute < start + SLOT_MINUTES) return index;
+  }
+  return -1;
+}
+
+/** Split one baseline crew across shifts. A shift that is alone still covers the posts; overlaps share them. */
+function sharedCrewSizes(postCount: number, rulesFor: (shiftId: ShiftId) => RuleSettings) {
+  const sizes = new Map<ShiftId, number>();
+  for (const shift of SHIFTS) sizes.set(shift.id, 0);
+  if (postCount <= 0) return sizes;
+  const avail = new Map<ShiftId, number>();
+  const cap = new Map<ShiftId, number>();
+  const slotsByShift = new Map<ShiftId, string[]>();
+  const samples = new Set<number>();
+  for (const shift of SHIFTS) {
+    const rules = rulesFor(shift.id);
+    const working = shift.hours - awayHours(shift.id, rules);
+    avail.set(shift.id, working > 0 ? working / shift.hours : 1);
+    cap.set(shift.id, requiredCrew(postCount, shift.hours, awayHours(shift.id, rules)));
+    const slots = memoSlots(shift.id);
+    slotsByShift.set(shift.id, slots);
+    for (const slot of slots) samples.add(timeToMinutes(slot));
+  }
+  const covers = (shiftId: ShiftId, minute: number) => slotIndexCovering(slotsByShift.get(shiftId) ?? [], minute) >= 0;
+  const supply = (minute: number) => {
+    let total = 0;
+    for (const shift of SHIFTS) {
+      if (!covers(shift.id, minute)) continue;
+      total += (sizes.get(shift.id) ?? 0) * (avail.get(shift.id) ?? 1);
+    }
+    return total;
+  };
+  for (let guard = 0; guard < postCount * SHIFTS.length * 4; guard += 1) {
+    let worst = 0;
+    const worstMinutes: number[] = [];
+    for (const minute of samples) {
+      if (!SHIFTS.some((shift) => covers(shift.id, minute))) continue;
+      const gap = postCount - supply(minute);
+      if (gap > worst + 1e-6) {
+        worst = gap;
+        worstMinutes.length = 0;
+        worstMinutes.push(minute);
+      } else if (gap > 1e-6 && Math.abs(gap - worst) <= 1e-6) {
+        worstMinutes.push(minute);
+      }
+    }
+    if (worst <= 1e-6) break;
+    let best: ShiftId | null = null;
+    let bestScore = -1;
+    for (const shift of SHIFTS) {
+      if ((sizes.get(shift.id) ?? 0) >= (cap.get(shift.id) ?? 0)) continue;
+      const hit = worstMinutes.filter((minute) => covers(shift.id, minute)).length;
+      if (!hit) continue;
+      const score = (hit * (avail.get(shift.id) ?? 1)) / ((sizes.get(shift.id) ?? 0) + 1);
+      if (score > bestScore) {
+        bestScore = score;
+        best = shift.id;
+      }
+    }
+    if (!best) break;
+    sizes.set(best, (sizes.get(best) ?? 0) + 1);
+  }
+  return sizes;
+}
+
+function buildSizedPlans(staffing: StaffingState, posts: string[], sizes: Map<ShiftId, number>) {
+  const plans = new Map<ShiftId, string[][]>();
+  for (const shift of SHIFTS) {
+    const rules = rulesForShift(staffing, shift.id);
+    plans.set(shift.id, buildShiftPlan(shift.id, {
+      counters: staffing.counters,
+      apc: staffing.apc,
+      kiosks: staffing.kiosks,
+      rules,
+    }, posts, true, sizes.get(shift.id) ?? 0));
+  }
+  return plans;
+}
+
+function trialWorkers(staffing: StaffingState, plans: Map<ShiftId, string[][]>) {
   const workers: SharedWorker[] = [];
   for (const shift of SHIFTS) {
-    const rules = shift.id === staffing.shiftId ? staffing.rules : defaultRules(shift.id);
-    const plan = buildShiftPlan(shift.id, { ...staffing, rules }, posts, true);
-    const slots = slotStarts(shift.id);
-    for (const cells of plan) {
+    const slots = memoSlots(shift.id);
+    const rules = rulesForShift(staffing, shift.id);
+    for (const cells of plans.get(shift.id) ?? []) {
       workers.push({
         shiftId: shift.id,
         rules,
         slots,
-        cells,
+        cells: cells.slice(),
+        previous: "",
+        current: "",
+        afterRest: false,
+        counts: new Map(),
+      });
+    }
+  }
+  return workers;
+}
+
+function filledPosts(workers: SharedWorker[], minute: number) {
+  const busy = new Set<string>();
+  for (const worker of workers) {
+    const index = slotIndexCovering(worker.slots, minute);
+    if (index < 0) continue;
+    const cell = worker.cells[index] ?? "";
+    if (!cell || isRestCode(cell)) continue;
+    busy.add(cell);
+  }
+  return busy.size;
+}
+
+function shiftStartingAt(minute: number, sizes: Map<ShiftId, number>, staffing: StaffingState, postCount: number, skip?: Set<ShiftId>) {
+  let best: ShiftId | null = null;
+  let bestScore = -1;
+  for (const shift of SHIFTS) {
+    if (skip?.has(shift.id)) continue;
+    if (!memoSlots(shift.id).some((slot) => timeToMinutes(slot) === minute)) continue;
+    const rules = rulesForShift(staffing, shift.id);
+    const away = awayHours(shift.id, rules);
+    const cap = requiredCrew(postCount, shift.hours, away);
+    const size = sizes.get(shift.id) ?? 0;
+    if (size >= cap) continue;
+    const working = shift.hours - away;
+    const avail = working > 0 ? working / shift.hours : 1;
+    const score = avail / (size + 1);
+    if (score > bestScore) {
+      bestScore = score;
+      best = shift.id;
+    }
+  }
+  return best;
+}
+
+function slotStartIndex(shiftId: ShiftId, minute: number) {
+  return memoSlots(shiftId).findIndex((slot) => timeToMinutes(slot) === minute);
+}
+
+/** Clear a rest only on a shift whose slot opens at this minute. An earlier overlapping slot cannot take the freed posts. */
+function clearRestAtStart(plans: Map<ShiftId, string[][]>, minute: number, code: "R" | "MB") {
+  let best: { cells: string[]; index: number; rests: number } | null = null;
+  for (const shift of SHIFTS) {
+    const index = slotStartIndex(shift.id, minute);
+    if (index < 0) continue;
+    for (const cells of plans.get(shift.id) ?? []) {
+      if (cells[index] !== code) continue;
+      const rests = cells.filter((cell) => cell === "R" || cell === "MB").length;
+      if (!best || rests > best.rests) best = { cells, index, rests };
+    }
+  }
+  if (!best) return false;
+  best.cells[best.index] = "";
+  return true;
+}
+
+function keepMealOffMinute(cells: string[], shiftId: ShiftId, minute: number) {
+  const slots = memoSlots(shiftId);
+  const index = slots.findIndex((slot) => timeToMinutes(slot) === minute);
+  if (index < 0 || cells[index] !== "MB") return;
+  const meal = cells.reduce<number[]>((found, cell, at) => {
+    if (cell === "MB") found.push(at);
+    return found;
+  }, []);
+  for (const at of meal) cells[at] = "";
+  const len = Math.max(1, meal.length);
+  for (let start = 0; start <= cells.length - len; start += 1) {
+    if (index >= start && index < start + len) continue;
+    for (let step = 0; step < len; step += 1) cells[start + step] = "MB";
+    return;
+  }
+}
+
+function releaseNewRests(plans: Map<ShiftId, string[][]>, shiftId: ShiftId, minute: number, fromRow: number) {
+  const index = slotStartIndex(shiftId, minute);
+  if (index < 0) return;
+  const rows = plans.get(shiftId) ?? [];
+  for (let row = fromRow; row < rows.length; row += 1) {
+    const cells = rows[row];
+    if (cells?.[index] === "R") cells[index] = "";
+  }
+}
+
+function appendShiftPerson(staffing: StaffingState, posts: string[], plans: Map<ShiftId, string[][]>, sizes: Map<ShiftId, number>, shiftId: ShiftId) {
+  const rows = plans.get(shiftId) ?? [];
+  const built = buildShiftPlan(shiftId, {
+    counters: staffing.counters,
+    apc: staffing.apc,
+    kiosks: staffing.kiosks,
+    rules: rulesForShift(staffing, shiftId),
+  }, posts, true, rows.length + 1);
+  const added = built[built.length - 1];
+  if (!added) return false;
+  rows.push(added);
+  plans.set(shiftId, rows);
+  sizes.set(shiftId, rows.length);
+  return true;
+}
+
+function coverSharedPlans(staffing: StaffingState, posts: string[]) {
+  const key = `${staffing.officeId}|${staffing.shiftId}|${posts.length}|${staffing.counters}|${staffing.apc}|${staffing.kiosks}|${JSON.stringify(staffing.rules)}`;
+  const cached = coverCache.get(key);
+  if (cached) return cached;
+  const sizes = sharedCrewSizes(posts.length, (shiftId) => rulesForShift(staffing, shiftId));
+  const plans = buildSizedPlans(staffing, posts, sizes);
+  const samples = [...new Set(SHIFTS.flatMap((shift) => memoSlots(shift.id).map((slot) => timeToMinutes(slot))))];
+  const stalled = new Set<number>();
+  let clearing = true;
+  for (let guard = 0; guard < samples.length + posts.length; guard += 1) {
+    const workers = trialWorkers(staffing, plans);
+    assignShared(workers, posts);
+    const gaps: { minute: number; gap: number }[] = [];
+    for (const minute of samples) {
+      if (stalled.has(minute)) continue;
+      const gap = posts.length - filledPosts(workers, minute);
+      if (gap > 0) gaps.push({ minute, gap });
+    }
+    if (!gaps.length) break;
+    gaps.sort((left, right) => right.gap - left.gap);
+    if (clearing) {
+      let cleared = false;
+      for (const item of gaps) {
+        for (let step = 0; step < item.gap; step += 1) {
+          if (!clearRestAtStart(plans, item.minute, "R")) break;
+          cleared = true;
+        }
+      }
+      clearing = false;
+      if (cleared) continue;
+    }
+    const worst = gaps[0];
+    if (!worst) break;
+    const skip = new Set<ShiftId>();
+    let filled = false;
+    while (!filled) {
+      const shiftId = shiftStartingAt(worst.minute, sizes, staffing, posts.length, skip);
+      if (!shiftId) {
+        stalled.add(worst.minute);
+        break;
+      }
+      const previous = (plans.get(shiftId) ?? []).map((cells) => cells.slice());
+      const previousSize = sizes.get(shiftId) ?? 0;
+      if (!appendShiftPerson(staffing, posts, plans, sizes, shiftId)) {
+        skip.add(shiftId);
+        continue;
+      }
+      const added = plans.get(shiftId)?.[previousSize];
+      if (added) keepMealOffMinute(added, shiftId, worst.minute);
+      releaseNewRests(plans, shiftId, worst.minute, previousSize);
+      const check = trialWorkers(staffing, plans);
+      assignShared(check, posts);
+      if (posts.length - filledPosts(check, worst.minute) >= worst.gap) {
+        sizes.set(shiftId, previousSize);
+        plans.set(shiftId, previous);
+        skip.add(shiftId);
+        continue;
+      }
+      filled = true;
+    }
+  }
+  coverCache.set(key, plans);
+  return plans;
+}
+
+/** One post pool for the office. Overlapping shifts share it; a post is never doubled. */
+function officePlans(staffing: StaffingState, source: "stored" | "preview"): Map<ShiftId, RosterRow[]> {
+  const posts = openPostCodes(staffing.officeId, staffing);
+  const sized = coverSharedPlans(staffing, posts);
+  const workers: SharedWorker[] = [];
+  for (const shift of SHIFTS) {
+    const rules = rulesForShift(staffing, shift.id);
+    const slots = memoSlots(shift.id);
+    for (const cells of sized.get(shift.id) ?? []) {
+      workers.push({
+        shiftId: shift.id,
+        rules,
+        slots,
+        cells: cells.slice(),
         previous: "",
         current: "",
         afterRest: false,
@@ -1319,27 +1611,34 @@ function assignShared(workers: SharedWorker[], posts: string[]) {
       giveShared(worker, job.index, worker.current, taken, seats, start, end);
       holding.set(worker.shiftId, (holding.get(worker.shiftId) ?? 0) + 1);
     }
-    const open = needing.filter((job) => !job.worker.cells[job.index]);
+    const queues = new Map<ShiftId, { worker: SharedWorker; index: number }[]>();
+    for (const job of needing) {
+      if (job.worker.cells[job.index]) continue;
+      const queue = queues.get(job.worker.shiftId);
+      if (queue) queue.push(job);
+      else queues.set(job.worker.shiftId, [job]);
+    }
     let cursor = 0;
-    while (open.length) {
-      let bestAt = -1;
+    while (queues.size) {
+      let bestShift: ShiftId | null = null;
       let bestHold = Number.POSITIVE_INFINITY;
       for (let step = 0; step < order.length; step += 1) {
         const shiftId = order[(cursor + step) % order.length];
-        const at = open.findIndex((job) => job.worker.shiftId === shiftId);
-        if (at < 0) continue;
+        const queue = queues.get(shiftId);
+        if (!queue?.length) continue;
         const hold = holding.get(shiftId) ?? 0;
         if (hold < bestHold) {
           bestHold = hold;
-          bestAt = at;
+          bestShift = shiftId;
         }
       }
-      if (bestAt < 0) break;
-      const job = open[bestAt];
+      if (!bestShift) break;
+      const queue = queues.get(bestShift);
+      const job = queue?.shift();
+      if (!queue?.length) queues.delete(bestShift);
       if (!job) break;
-      open.splice(bestAt, 1);
+      cursor = (order.indexOf(bestShift) + 1) % order.length;
       const worker = job.worker;
-      cursor = (order.indexOf(worker.shiftId) + 1) % order.length;
       const avoid = !worker.rules.returnAfterRest && worker.afterRest ? worker.previous : "";
       const prefer = worker.rules.returnAfterRest && worker.afterRest ? worker.previous : "";
       const code = choosePost([0], prefer, posts, [taken], { avoid, counts: worker.counts });

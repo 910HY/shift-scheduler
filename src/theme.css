@@ -528,6 +528,8 @@ select {
 
 .v10-shell {
   min-height: 100svh;
+  display: flex;
+  flex-direction: column;
   background: var(--bg-app, #f4f5f7);
   color: var(--ink-primary, #1a1d23);
 }
@@ -806,15 +808,24 @@ select {
 .shortage,
 .overlap-note,
 .extreme-banner,
+.off-clock,
 .draft-banner,
 .issue-list {
   margin: 0;
   padding: 8px 12px;
 }
 
-.extreme-banner {
+.extreme-banner,
+.off-clock,
+.off-clock-floor {
   background: #fff4e5;
   color: #8a4b08;
+}
+
+.off-clock-floor {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
 }
 
 .draft-banner,
@@ -837,10 +848,29 @@ select {
 }
 
 .v10-body {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 280px;
   gap: 12px;
   padding: 12px;
+  align-items: start;
+}
+
+.v10-body > main {
+  min-width: 0;
+  min-height: 280px;
+}
+
+.now-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.now-wrap h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
 }
 
 .v10-side,
@@ -1066,7 +1096,7 @@ select {
   .ops-crew strong { font-size: 32px; }
   .v10-body { grid-template-columns: 1fr; padding: 8px; }
   .now-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .roster-scroll { display: none; }
+  .roster-scroll { max-height: 70svh; }
   .shift-picker-dialog {
     top: auto;
     bottom: 0;
