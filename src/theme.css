@@ -538,6 +538,7 @@ select {
 .ops-offices,
 .ops-percents,
 .ops-actions,
+.ops-add-posts,
 .ops-shift-list,
 .quick-row,
 .chip-row,
@@ -703,6 +704,15 @@ select {
   font-variant-numeric: tabular-nums;
   color: var(--ink-primary, #1a1d23);
   outline: none;
+}
+
+.ops-add-posts {
+  flex: 1 1 100%;
+}
+
+.ops-add-posts button {
+  flex: 1 1 108px;
+  font-weight: 650;
 }
 
 .ops-open-strip {
@@ -1081,6 +1091,7 @@ select {
   .span-2,
   .ops-shift,
   .ops-metrics,
+  .ops-add-posts,
   .ops-open-strip,
   .ops-actions,
   .ops-percents,

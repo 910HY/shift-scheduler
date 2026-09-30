@@ -7,6 +7,7 @@ import {
   awayHours,
   bookKey,
   checkRoster,
+  addOpenPosts,
   combinedRoster,
   createDefaultStaffing,
   createLoan,
@@ -632,6 +633,72 @@ function addHalfHour(slot: string) {
   const total = (hour ?? 0) * 60 + (minute ?? 0) + 30;
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
+
+describe("temporary posts", () => {
+  it("adds counter and APC posts onto the floor, roster and preview workbook", async () => {
+    const base = {
+      ...createDefaultStaffing(),
+      counters: 10,
+      apc: 0,
+      kiosks: 0,
+      books: {},
+      percent: 100,
+    };
+    const before = { ...board(), now: "09:15", staffing: base };
+    const beforeCodes = openPostCodes("arr-hall", base);
+    const beforeCrew = crewFor(base);
+    expect(beforeCodes).toHaveLength(10);
+    expect(beforeCodes).not.toContain("11");
+
+    const added = addOpenPosts(addOpenPosts(before, "counter", 2), "apc", 1);
+    const staffing = added.staffing!;
+    expect(staffing.counters).toBe(12);
+    expect(staffing.apc).toBe(1);
+    expect(staffing.percent).toBeNull();
+    const codes = openPostCodes("arr-hall", staffing);
+    expect(codes).toEqual([...Array.from({ length: 12 }, (_, index) => String(index + 1)), "Apc 1"]);
+    expect(crewFor(staffing)).toBeGreaterThan(beforeCrew);
+    expect(projectBoard(added).posts).toHaveLength(13);
+    expect(projectBoard(added).posts.map((post) => post.name)).toEqual(expect.arrayContaining(["11", "12", "Apc 1"]));
+
+    const roster = combinedRoster(staffing, "preview");
+    const morning = postsAt(roster, "09:15");
+    expect(morning.size).toBe(13);
+    expect(morning.has("11")).toBe(true);
+    expect(morning.has("12")).toBe(true);
+    expect(morning.has("Apc 1")).toBe(true);
+    for (const names of morning.values()) expect(names).toHaveLength(1);
+
+    const buffer = await buildPreviewWorkbook(staffing);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as ExcelJS.Buffer);
+    const sheet = workbook.getWorksheet("preview");
+    const values = new Set<string>();
+    sheet?.eachRow((row) => {
+      row.eachCell((cell) => {
+        const value = String(cell.value ?? "");
+        if (value) values.add(value);
+      });
+    });
+    expect(values.has("11")).toBe(true);
+    expect(values.has("12")).toBe(true);
+    expect(values.has("Apc 1")).toBe(true);
+  });
+
+  it("adds kiosk posts only on a kiosk office", () => {
+    const hall = addOpenPosts(board(), "kiosk", 2);
+    expect(hall.staffing?.kiosks).toBe(createDefaultStaffing().kiosks);
+    const kiosk = {
+      ...board(),
+      staffing: { ...createDefaultStaffing(), officeId: "arr-kiosk" as const, kiosks: 4, books: {}, percent: null },
+    };
+    const added = addOpenPosts(kiosk, "kiosk", 2);
+    expect(added.staffing?.kiosks).toBe(6);
+    expect(openPostCodes("arr-kiosk", added.staffing!)).toEqual(["A1", "A2", "A3", "A4", "A5", "A6"]);
+    expect(crewFor(added.staffing!)).toBeGreaterThan(crewFor(kiosk.staffing!));
+    expect(addOpenPosts(added, "counter", 1).staffing?.counters).toBe(added.staffing?.counters);
+  });
+});
 
 describe("preview workbook", () => {
   it("writes an xlsx with orange rest cells on the overlapping timeline", async () => {
