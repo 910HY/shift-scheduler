@@ -18,11 +18,14 @@ import {
   isExtreme,
   isRestCode,
   officeFocus,
+  offClockWarning,
   openPostCodes,
   previewFilename,
   projectBoard,
   setCell,
+  setShift,
   shiftsActiveAt,
+  shortageAdvice,
   siteOverview,
   requiredCrew,
   revokeLoan,
@@ -35,6 +38,8 @@ import {
   slotIndexAt,
   slotStarts,
 } from "@/logic/staffing";
+import { isWithinDuty } from "@/logic/time";
+import { createAppSeed } from "@/logic/seed";
 import type { BoardState } from "@/types";
 
 function board(): BoardState {
@@ -496,6 +501,69 @@ describe("overlapping shifts", () => {
     const duty = floor.staff.map((person) => person.dutyPost).filter((post): post is string => Boolean(post));
     expect(new Set(duty).size).toBe(duty.length);
     expect(duty.length).toBeLessThanOrEqual(10);
+  });
+
+  it("splits one baseline crew across B2, B1 and C2 instead of copying it onto each shift", () => {
+    const staffing = {
+      ...createDefaultStaffing(),
+      counters: 31,
+      apc: 0,
+      kiosks: 0,
+      books: {},
+      percent: null,
+    };
+    expect(crewFor(staffing)).toBe(41);
+    const roster = combinedRoster(staffing, "preview");
+    const count = (shiftId: string) => roster.rows.filter((row) => row.code.startsWith(`${shiftId} `)).length;
+    expect(count("B2")).toBeGreaterThan(0);
+    expect(count("B1")).toBeGreaterThan(0);
+    expect(count("C2")).toBeGreaterThan(0);
+    expect(count("B2")).toBeLessThan(41);
+    expect(count("B1")).toBeLessThan(41);
+    expect(count("C2")).toBeLessThan(41);
+    const total = count("B2") + count("B1") + count("C2");
+    expect(total).toBeGreaterThan(41);
+    expect(total).toBeLessThan(41 * 2);
+    const morning = postsAt(roster, "09:15");
+    expect(morning.size).toBe(31);
+    for (const names of morning.values()) expect(names).toHaveLength(1);
+    const later = projectBoard({ ...board(), now: "13:15", staffing });
+    const duty = later.staff.map((person) => person.dutyPost).filter((post): post is string => Boolean(post));
+    expect(new Set(duty).size).toBe(duty.length);
+    expect(duty.length).toBe(31);
+    expect(later.staff.some((person) => person.shift === "B2")).toBe(false);
+    expect(later.staff.some((person) => person.shift === "B1" && person.dutyPost)).toBe(true);
+    expect(later.staff.some((person) => person.shift === "C2" && person.dutyPost)).toBe(true);
+  });
+
+  it("counts only people whose duty window covers now, and shows 0 off the clock", () => {
+    const demo = createAppSeed();
+    const focus = officeFocus(demo);
+    const shown = projectBoard(demo);
+    expect(focus?.onSite).toBe((focus?.onduty ?? 0) + (focus?.rest ?? 0));
+    expect(focus?.onSite).toBeLessThan(180);
+    expect(focus?.onSite).not.toBe(222);
+    expect(focus?.rest).not.toBe(182);
+    expect(shown.staff.every((person) => isWithinDuty(person, demo.now))).toBe(true);
+    expect(shown.staff.some((person) => person.shift === "A")).toBe(false);
+    expect(shown.staff.some((person) => person.shift === "B2")).toBe(true);
+
+    const off = { ...demo, now: "00:00" };
+    expect(shiftsActiveAt(off.now)).toEqual([]);
+    expect(offClockWarning(off.now)).toContain("在場係 0");
+    expect(shortageAdvice(off.staffing!, off.now).text).toBe(offClockWarning(off.now));
+    const empty = officeFocus(off);
+    expect(empty?.onSite).toBe(0);
+    expect(empty?.onduty).toBe(0);
+    expect(empty?.rest).toBe(0);
+    expect(empty?.filled).toBe(0);
+    expect(projectBoard(off).staff).toEqual([]);
+
+    const moved = setShift(demo, "A");
+    expect(moved.now).toBe("00:01");
+    expect(shiftsActiveAt(moved.now)).toContain("A");
+    const kept = setShift({ ...demo, now: "11:00" }, "B1");
+    expect(kept.now).toBe("11:00");
   });
 
   it("edits another shift's cell without changing the selected shift", () => {
