@@ -43,6 +43,8 @@ export type Staff = {
   restOrder: number;
   /** Empty means Counter, APC and Kiosk are all allowed. */
   allows?: PostKind[];
+  /** Post this person is working, even when another shift already holds that bay. */
+  dutyPost?: string | null;
 };
 
 export type OfficeId = "arr-hall" | "dep-hall" | "arr-kiosk" | "dep-kiosk";
