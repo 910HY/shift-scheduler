@@ -11,9 +11,12 @@ import {
   crewFor,
   defaultRules,
   extremeNotes,
+  generateRoster,
   hallMax,
   isExtreme,
+  isRestCode,
   officeFocus,
+  openPostCodes,
   previewFilename,
   projectBoard,
   siteOverview,
@@ -224,6 +227,148 @@ describe("loans", () => {
     expect(restored.staffing?.loans).toHaveLength(1);
     const back = restored.staffing!.books["dep-hall|B2|c30|a10"]!.find((row) => row.code === "K1");
     expect(back?.cells.some((cell) => cell.startsWith("on loan"))).toBe(false);
+  });
+});
+
+describe("generated roster posts", () => {
+  function workRuns(cells: string[]) {
+    const runs: string[][] = [];
+    let run: string[] = [];
+    for (const cell of cells) {
+      if (!cell || isRestCode(cell)) {
+        if (run.length) runs.push(run);
+        run = [];
+        continue;
+      }
+      run.push(cell);
+    }
+    if (run.length) runs.push(run);
+    return runs;
+  }
+
+  function restBoundaries(cells: string[]) {
+    const boundaries: { slot: number; before: string; after: string }[] = [];
+    let previous = "";
+    let sawRest = false;
+    cells.forEach((cell, slot) => {
+      if (!cell || isRestCode(cell)) {
+        if (previous) sawRest = true;
+        return;
+      }
+      if (sawRest && previous) boundaries.push({ slot, before: previous, after: cell });
+      previous = cell;
+      sawRest = false;
+    });
+    return boundaries;
+  }
+
+  function othersTaken(rows: { cells: string[] }[], rowIndex: number, slot: number) {
+    const taken = new Set<string>();
+    rows.forEach((row, index) => {
+      if (index === rowIndex) return;
+      const cell = row.cells[slot] ?? "";
+      if (cell && !isRestCode(cell)) taken.add(cell);
+    });
+    return taken;
+  }
+
+  it("leaves the pre-rest post when returnAfterRest is off and another post is free", () => {
+    const rules = { ...defaultRules("B2"), returnAfterRest: false };
+    const staffing = { counters: 4, apc: 2, kiosks: 0, rules };
+    const posts = openPostCodes("arr-hall", staffing);
+    const rows = generateRoster("arr-hall", "B2", staffing, false);
+    let checked = 0;
+    rows.forEach((row, rowIndex) => {
+      for (const boundary of restBoundaries(row.cells)) {
+        const taken = othersTaken(rows, rowIndex, boundary.slot);
+        const alternative = posts.some((code) => code !== boundary.before && !taken.has(code));
+        if (!alternative) continue;
+        expect(boundary.after).not.toBe(boundary.before);
+        checked += 1;
+      }
+    });
+    expect(checked).toBeGreaterThan(0);
+    const work = rows[0]?.cells.filter((cell) => cell && !isRestCode(cell)) ?? [];
+    expect(work.length).toBeGreaterThan(1);
+    expect(new Set(work).size).toBeGreaterThan(1);
+  });
+
+  it("spreads counter and APC codes across the shift when returnAfterRest is off", () => {
+    const rules = { ...defaultRules("B2"), returnAfterRest: false };
+    const staffing = { counters: 30, apc: 10, kiosks: 0, rules };
+    const rows = generateRoster("arr-hall", "B2", staffing, false);
+    const workOf = (cells: string[]) => cells.filter((cell) => cell && !isRestCode(cell));
+    const k1 = workOf(rows[0]?.cells ?? []);
+    expect(k1.length).toBeGreaterThan(1);
+    expect(new Set(k1).size).toBeGreaterThan(1);
+    const apcPeople = rows.filter((row) => workOf(row.cells).some((cell) => cell.startsWith("Apc ")));
+    expect(apcPeople.length).toBeGreaterThan(0);
+    for (const row of apcPeople) expect(new Set(workOf(row.cells)).size).toBeGreaterThan(1);
+    const glued = rows.filter((row) => {
+      const work = workOf(row.cells);
+      return work.length > 1 && new Set(work).size === 1;
+    });
+    expect(glued).toEqual([]);
+    const posts = openPostCodes("arr-hall", staffing);
+    for (const row of rows) {
+      for (const run of workRuns(row.cells)) expect(new Set(run).size).toBe(1);
+    }
+    for (let slot = 0; slot < (rows[0]?.cells.length ?? 0); slot += 1) {
+      const seen = new Map<string, number>();
+      for (const row of rows) {
+        const cell = row.cells[slot] ?? "";
+        if (!cell || isRestCode(cell)) continue;
+        seen.set(cell, (seen.get(cell) ?? 0) + 1);
+      }
+      for (const count of seen.values()) expect(count).toBe(1);
+      for (const code of posts) expect(seen.has(code)).toBe(true);
+    }
+  });
+
+  it("returns to the prior post after rest when returnAfterRest is on and that post is free", () => {
+    const rules = { ...defaultRules("B2"), returnAfterRest: true, stickyPost: true };
+    const staffing = { counters: 3, apc: 1, kiosks: 0, rules };
+    const rows = generateRoster("arr-hall", "B2", staffing, false);
+    let checked = 0;
+    rows.forEach((row, rowIndex) => {
+      for (const boundary of restBoundaries(row.cells)) {
+        const taken = othersTaken(rows, rowIndex, boundary.slot);
+        if (taken.has(boundary.before)) continue;
+        expect(boundary.after).toBe(boundary.before);
+        checked += 1;
+      }
+    });
+    expect(checked).toBeGreaterThan(0);
+    const home = workRuns(rows[0]?.cells ?? []);
+    expect(home.length).toBeGreaterThan(1);
+    expect(new Set(home[0] ?? [])).toEqual(new Set(home[1] ?? []));
+  });
+
+  it("rotates kiosk posts inside a work run when stickyPost is off", () => {
+    const rules = { ...defaultRules("B2"), stickyPost: false, returnAfterRest: false };
+    const staffing = { counters: 0, apc: 0, kiosks: 4, rules };
+    const rows = generateRoster("arr-kiosk", "B2", staffing, false);
+    const runs = workRuns(rows[0]?.cells ?? []).filter((run) => run.length > 1);
+    expect(runs.length).toBeGreaterThan(0);
+    expect(runs.some((run) => new Set(run).size > 1)).toBe(true);
+    expect(rows[0]?.cells.some((cell) => /^A\d+$/.test(cell))).toBe(true);
+  });
+
+  it("does not keep the pre-meal post after MB when returnAfterRest is off", () => {
+    const rules = { ...defaultRules("B1"), returnAfterRest: false };
+    const staffing = { counters: 3, apc: 1, kiosks: 0, rules };
+    const posts = openPostCodes("arr-hall", staffing);
+    const rows = generateRoster("arr-hall", "B1", staffing, false);
+    const row = rows[0];
+    expect(row?.cells.includes("MB")).toBe(true);
+    const mealAt = row?.cells.findIndex((cell) => cell === "MB") ?? -1;
+    const before = [...(row?.cells.slice(0, mealAt) ?? [])].reverse().find((cell) => cell && !isRestCode(cell));
+    const afterIndex = row?.cells.findIndex((cell, index) => index > mealAt && cell && !isRestCode(cell)) ?? -1;
+    const after = afterIndex >= 0 ? row?.cells[afterIndex] : "";
+    const taken = othersTaken(rows, 0, afterIndex);
+    const alternative = posts.some((code) => code !== before && !taken.has(code));
+    expect(before && after && alternative).toBeTruthy();
+    expect(after).not.toBe(before);
   });
 });
 
