@@ -789,6 +789,7 @@ export function projectBoard(state: BoardState): BoardState {
     assigneeId: null,
   }));
   const staff: Staff[] = [];
+  const plans = officePlans(staffing, "stored");
   for (const shiftId of ordered) {
     const shift = shiftOf(shiftId);
     const slots = slotStarts(shiftId);
@@ -797,7 +798,7 @@ export function projectBoard(state: BoardState): BoardState {
     const slotStart = slots[index] ?? shift.start;
     const slotEnd = formatMinute(timeToMinutes(slotStart) + SLOT_MINUTES);
     const selected = shiftId === staffing.shiftId;
-    shiftRoster(staffing, shiftId, "stored").forEach((row, order) => {
+    (plans.get(shiftId) ?? []).forEach((row, order) => {
       const cell = row.cells[index] ?? "";
       if (!cell || isLoanMarker(cell)) return;
       const person = personFromRow(row, order, shift, shiftId);
@@ -898,9 +899,10 @@ export function combinedRoster(staffing: StaffingState, source: "stored" | "prev
   }
   const slots = [...slotSet].sort((left, right) => timeToMinutes(left) - timeToMinutes(right));
   const rows: RosterRow[] = [];
+  const plans = officePlans(staffing, source);
   for (const shiftId of shifts) {
     const nativeSlots = slotStarts(shiftId);
-    for (const row of shiftRoster(staffing, shiftId, source)) {
+    for (const row of plans.get(shiftId) ?? []) {
       const cells = slots.map((slot) => {
         const index = nativeSlots.indexOf(slot);
         return index < 0 ? "" : (row.cells[index] ?? "");
@@ -983,28 +985,7 @@ export function generateRoster(
   const rules = staffing.rules;
   const slots = slotStarts(shiftId);
   const posts = openPostCodes(officeId, staffing);
-  const crew = requiredCrew(posts.length, shiftOf(shiftId).hours, awayHours(shiftId, rules));
-  const restCount = shiftId === "A" ? rules.shortRestTurns : rules.restTurns;
-  const blocked = mealIndexes(shiftId, slots, rules);
-  const rests = new Map<number, Set<number>>();
-  for (let slot = 0; slot < slots.length; slot += 1) rests.set(slot, new Set());
-  const plan: string[][] = [];
-  for (let person = 0; person < Math.max(crew, 1); person += 1) {
-    const cells = Array.from({ length: slots.length }, () => "");
-    const restAt = pickRests(slots.length, restCount, blocked, person, rests, posts.length);
-    for (const index of restAt) cells[index] = "R";
-    for (const index of blocked) cells[index] = shiftId === "A" ? "B" : "MB";
-    if (shiftId === "A" && rules.requireBigRest) {
-      const need = Math.max(1, Math.round((rules.bigRestMinHours * 60) / SLOT_MINUTES));
-      const start = person % Math.max(1, slots.length - need);
-      for (let step = 0; step < need; step += 1) {
-        const index = start + step;
-        if (cells[index] === "R") rests.get(index)?.delete(person);
-        cells[index] = "B";
-      }
-    }
-    plan.push(cells);
-  }
+  const plan = buildShiftPlan(shiftId, staffing, posts, false);
   const occupancy = slots.map(() => new Set<string>());
   if (rules.returnAfterRest) {
     assignPeople(plan, posts, occupancy, true, rules.stickyPost);
@@ -1017,6 +998,39 @@ export function generateRoster(
     allows: [],
     cells,
   }));
+}
+
+function buildShiftPlan(
+  shiftId: ShiftId,
+  staffing: Pick<StaffingState, "counters" | "apc" | "kiosks" | "rules">,
+  posts: string[],
+  staggerMeals: boolean,
+): string[][] {
+  const rules = staffing.rules;
+  const slots = slotStarts(shiftId);
+  const crew = requiredCrew(posts.length, shiftOf(shiftId).hours, awayHours(shiftId, rules));
+  const restCount = shiftId === "A" ? rules.shortRestTurns : rules.restTurns;
+  const rests = new Map<number, Set<number>>();
+  for (let slot = 0; slot < slots.length; slot += 1) rests.set(slot, new Set());
+  const plan: string[][] = [];
+  for (let person = 0; person < Math.max(crew, 1); person += 1) {
+    const cells = Array.from({ length: slots.length }, () => "");
+    const meals = mealSpan(shiftId, slots, rules, person, staggerMeals);
+    const restAt = pickRests(slots.length, restCount, meals, person, rests, posts.length);
+    for (const index of restAt) cells[index] = "R";
+    for (const index of meals) cells[index] = shiftId === "A" ? "B" : "MB";
+    if (shiftId === "A" && rules.requireBigRest) {
+      const need = Math.max(1, Math.round((rules.bigRestMinHours * 60) / SLOT_MINUTES));
+      const start = person % Math.max(1, slots.length - need);
+      for (let step = 0; step < need; step += 1) {
+        const index = start + step;
+        if (cells[index] === "R") rests.get(index)?.delete(person);
+        cells[index] = "B";
+      }
+    }
+    plan.push(cells);
+  }
+  return plan;
 }
 
 function assignPeople(
@@ -1183,6 +1197,205 @@ function pickRests(slotCount: number, turns: number, blocked: Set<number>, perso
     }
   }
   return picked;
+}
+
+type SharedWorker = {
+  shiftId: ShiftId;
+  rules: RuleSettings;
+  slots: string[];
+  cells: string[];
+  previous: string;
+  current: string;
+  afterRest: boolean;
+  counts: Map<string, number>;
+};
+
+type Seat = { post: string; start: number; end: number };
+
+/** One post pool for the office. Overlapping shifts share it; a post is never doubled. */
+function officePlans(staffing: StaffingState, source: "stored" | "preview"): Map<ShiftId, RosterRow[]> {
+  const posts = openPostCodes(staffing.officeId, staffing);
+  const workers: SharedWorker[] = [];
+  for (const shift of SHIFTS) {
+    const rules = shift.id === staffing.shiftId ? staffing.rules : defaultRules(shift.id);
+    const plan = buildShiftPlan(shift.id, { ...staffing, rules }, posts, true);
+    const slots = slotStarts(shift.id);
+    for (const cells of plan) {
+      workers.push({
+        shiftId: shift.id,
+        rules,
+        slots,
+        cells,
+        previous: "",
+        current: "",
+        afterRest: false,
+        counts: new Map(),
+      });
+    }
+  }
+  assignShared(workers, posts);
+  const grouped = new Map<ShiftId, RosterRow[]>();
+  for (const shift of SHIFTS) grouped.set(shift.id, []);
+  const seen = new Map<ShiftId, number>();
+  for (const worker of workers) {
+    const count = (seen.get(worker.shiftId) ?? 0) + 1;
+    seen.set(worker.shiftId, count);
+    const code = `K${count}`;
+    grouped.get(worker.shiftId)?.push({
+      id: rowId(staffing.officeId, code),
+      code,
+      allows: [],
+      cells: worker.cells,
+    });
+  }
+  if (source === "stored") {
+    for (const shift of SHIFTS) {
+      const key = bookKey(staffing.officeId, shift.id, staffing.counters, staffing.apc, staffing.kiosks);
+      overlayDutyEdits(grouped.get(shift.id) ?? [], staffing.books[key]);
+    }
+  }
+  for (const shift of SHIFTS) {
+    const rows = grouped.get(shift.id);
+    if (!rows) continue;
+    for (const loan of staffing.loans) {
+      if (loan.toOffice !== staffing.officeId || loan.shiftId !== shift.id) continue;
+      rows.push({
+        id: `loan:${loan.id}`,
+        code: loan.personCode,
+        allows: loan.allows.slice(),
+        cells: loan.cells.slice(),
+      });
+    }
+  }
+  return grouped;
+}
+
+function overlayDutyEdits(rows: RosterRow[], stored: RosterRow[] | undefined) {
+  if (!stored) return;
+  const byId = new Map(stored.map((row) => [row.id, row]));
+  for (const row of rows) {
+    const source = byId.get(row.id);
+    if (!source) continue;
+    source.cells.forEach((cell, index) => {
+      if (index >= row.cells.length) return;
+      if (cell === EARLY_CELL || isLoanMarker(cell)) row.cells[index] = cell;
+    });
+    if (source.leaveEarlyAt) row.leaveEarlyAt = source.leaveEarlyAt;
+    if (source.returnLateAt) row.returnLateAt = source.returnLateAt;
+    if (source.restLocked) row.restLocked = source.restLocked;
+    if (source.allows.length) row.allows = source.allows.slice();
+  }
+}
+
+function assignShared(workers: SharedWorker[], posts: string[]) {
+  const seats: Seat[] = [];
+  const starts = new Set<string>();
+  for (const worker of workers) {
+    for (const slot of worker.slots) starts.add(slot);
+  }
+  const times = [...starts].sort((left, right) => timeToMinutes(left) - timeToMinutes(right));
+  const order = SHIFTS.map((shift) => shift.id);
+  for (const slot of times) {
+    const start = timeToMinutes(slot);
+    const end = start + SLOT_MINUTES;
+    const taken = postsBusy(seats, start, end);
+    const holding = new Map<ShiftId, number>();
+    const needing: { worker: SharedWorker; index: number }[] = [];
+    for (const worker of workers) {
+      const index = worker.slots.indexOf(slot);
+      if (index < 0) continue;
+      const cell = worker.cells[index] ?? "";
+      if (cell) {
+        if (worker.current) worker.previous = worker.current;
+        worker.current = "";
+        worker.afterRest = worker.previous !== "";
+        continue;
+      }
+      needing.push({ worker, index });
+    }
+    for (const job of needing) {
+      const worker = job.worker;
+      if (!worker.rules.stickyPost || !worker.current || taken.has(worker.current) || !posts.includes(worker.current)) continue;
+      giveShared(worker, job.index, worker.current, taken, seats, start, end);
+      holding.set(worker.shiftId, (holding.get(worker.shiftId) ?? 0) + 1);
+    }
+    const open = needing.filter((job) => !job.worker.cells[job.index]);
+    let cursor = 0;
+    while (open.length) {
+      let bestAt = -1;
+      let bestHold = Number.POSITIVE_INFINITY;
+      for (let step = 0; step < order.length; step += 1) {
+        const shiftId = order[(cursor + step) % order.length];
+        const at = open.findIndex((job) => job.worker.shiftId === shiftId);
+        if (at < 0) continue;
+        const hold = holding.get(shiftId) ?? 0;
+        if (hold < bestHold) {
+          bestHold = hold;
+          bestAt = at;
+        }
+      }
+      if (bestAt < 0) break;
+      const job = open[bestAt];
+      if (!job) break;
+      open.splice(bestAt, 1);
+      const worker = job.worker;
+      cursor = (order.indexOf(worker.shiftId) + 1) % order.length;
+      const avoid = !worker.rules.returnAfterRest && worker.afterRest ? worker.previous : "";
+      const prefer = worker.rules.returnAfterRest && worker.afterRest ? worker.previous : "";
+      const code = choosePost([0], prefer, posts, [taken], { avoid, counts: worker.counts });
+      if (!code) {
+        worker.cells[job.index] = "R";
+        if (worker.current) worker.previous = worker.current;
+        worker.current = "";
+        worker.afterRest = worker.previous !== "";
+        continue;
+      }
+      giveShared(worker, job.index, code, taken, seats, start, end);
+      holding.set(worker.shiftId, (holding.get(worker.shiftId) ?? 0) + 1);
+    }
+  }
+}
+
+function giveShared(
+  worker: SharedWorker,
+  index: number,
+  code: string,
+  taken: Set<string>,
+  seats: Seat[],
+  start: number,
+  end: number,
+) {
+  worker.cells[index] = code;
+  taken.add(code);
+  seats.push({ post: code, start, end });
+  worker.current = code;
+  worker.counts.set(code, (worker.counts.get(code) ?? 0) + 1);
+  worker.afterRest = false;
+}
+
+function postsBusy(seats: Seat[], start: number, end: number) {
+  const taken = new Set<string>();
+  for (const seat of seats) {
+    if (seat.start < end && start < seat.end) taken.add(seat.post);
+  }
+  return taken;
+}
+
+function mealSpan(shiftId: ShiftId, slots: string[], rules: RuleSettings, person: number, stagger: boolean) {
+  const blocked = new Set<number>();
+  if (shiftId === "A" || !rules.applyMeal) return blocked;
+  if (!stagger) {
+    for (const index of mealIndexes(shiftId, slots, rules)) blocked.add(index);
+    return blocked;
+  }
+  const mealLen = Math.max(1, Math.round(rules.mealMinutes / SLOT_MINUTES));
+  const startMinute = timeToMinutes(shiftOf(shiftId).mealStart ?? "11:00");
+  const first = slots.findIndex((slot) => timeToMinutes(slot) >= startMinute);
+  if (first < 0) return blocked;
+  const lastStart = Math.max(first, slots.length - mealLen);
+  const start = first + (person % Math.max(1, lastStart - first + 1));
+  for (let step = 0; step < mealLen && start + step < slots.length; step += 1) blocked.add(start + step);
+  return blocked;
 }
 
 function mealIndexes(shiftId: ShiftId, slots: string[], rules: RuleSettings) {

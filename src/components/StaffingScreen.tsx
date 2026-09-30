@@ -377,7 +377,7 @@ export function StaffingScreen() {
 
       <p className="shortage" data-testid="shortage">{advice.text}</p>
       <p className="overlap-note" data-testid="overlap-shifts">
-        同時段 {overlap.shifts.join("、")}。{state.now} 仍在崗：{activeNow.length ? activeNow.join("、") : "沒有更"}
+        同時段 {overlap.shifts.join("、")}。崗位一個池。{state.now} 仍在崗：{activeNow.length ? activeNow.join("、") : "沒有更"}
       </p>
       {(hint || board.notice) && <p className="board-notice px-4 py-2 text-sm">{hint || board.notice}</p>}
       {extreme && (
