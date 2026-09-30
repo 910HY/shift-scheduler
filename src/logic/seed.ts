@@ -1,4 +1,4 @@
-import { createDefaultStaffing } from "@/logic/staffing";
+import { createDefaultStaffing, shiftOf, shiftsActiveAt } from "@/logic/staffing";
 import type { BoardState, Staff } from "@/types";
 
 function person(
@@ -83,16 +83,24 @@ export function createAppSeed(): BoardState {
   return { ...createSeed(), shiftName: "B2", staffing: createDefaultStaffing() };
 }
 
+/** Demo and restored boards open inside the selected shift. A manual clock change stays put. */
+export function alignNowToSelectedShift(state: BoardState): BoardState {
+  const shiftId = state.staffing?.shiftId;
+  if (!shiftId) return state;
+  if (shiftsActiveAt(state.now).includes(shiftId)) return state;
+  return { ...state, now: shiftOf(shiftId).start };
+}
+
 export function ensureStaffing(state: BoardState): BoardState {
-  if (state.staffing?.books) {
-    return {
-      ...state,
-      staffing: {
-        ...state.staffing,
-        closures: state.staffing.closures ?? [],
-        loans: state.staffing.loans ?? [],
-      },
-    };
-  }
-  return { ...state, shiftName: "B2", staffing: createDefaultStaffing() };
+  const next: BoardState = state.staffing?.books
+    ? {
+        ...state,
+        staffing: {
+          ...state.staffing,
+          closures: state.staffing.closures ?? [],
+          loans: state.staffing.loans ?? [],
+        },
+      }
+    : { ...state, shiftName: "B2", staffing: createDefaultStaffing() };
+  return alignNowToSelectedShift(next);
 }

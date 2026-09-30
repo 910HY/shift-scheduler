@@ -39,7 +39,7 @@ import {
   slotStarts,
 } from "@/logic/staffing";
 import { isWithinDuty } from "@/logic/time";
-import { createAppSeed } from "@/logic/seed";
+import { alignNowToSelectedShift, createAppSeed, ensureStaffing } from "@/logic/seed";
 import type { BoardState } from "@/types";
 
 function board(): BoardState {
@@ -538,32 +538,70 @@ describe("overlapping shifts", () => {
 
   it("counts only people whose duty window covers now, and shows 0 off the clock", () => {
     const demo = createAppSeed();
+    expect(demo.now).toBe("13:10");
+    expect(crewFor(demo.staffing!)).toBe(52);
+    expect(openPostCodes("arr-hall", demo.staffing!)).toHaveLength(40);
     const focus = officeFocus(demo);
     const shown = projectBoard(demo);
+    expect(focus?.total).toBe(40);
+    expect(focus?.filled).toBe(40);
     expect(focus?.onSite).toBe((focus?.onduty ?? 0) + (focus?.rest ?? 0));
-    expect(focus?.onSite).toBeLessThan(180);
+    expect(focus?.onSite).toBeGreaterThan(40);
+    expect(focus?.onSite).toBeLessThan(150);
     expect(focus?.onSite).not.toBe(222);
+    expect(focus?.rest).toBeLessThan(120);
     expect(focus?.rest).not.toBe(182);
+    expect(shown.posts).toHaveLength(40);
     expect(shown.staff.every((person) => isWithinDuty(person, demo.now))).toBe(true);
+    expect(shown.staff.every((person) => shiftsActiveAt(demo.now).includes(person.shift as "B2"))).toBe(true);
     expect(shown.staff.some((person) => person.shift === "A")).toBe(false);
     expect(shown.staff.some((person) => person.shift === "B2")).toBe(true);
+    expect(offClockWarning(demo.now, "B2")).toBeNull();
+
+    const night = { ...demo, now: "01:10" };
+    expect(shiftsActiveAt(night.now)).toEqual(["A"]);
+    const nightFocus = officeFocus(night);
+    const nightBoard = projectBoard(night);
+    expect(nightBoard.posts).toHaveLength(40);
+    expect(nightBoard.staff.length).toBeGreaterThan(0);
+    expect(nightBoard.staff.every((person) => person.shift === "A")).toBe(true);
+    expect(nightBoard.staff.every((person) => isWithinDuty(person, night.now))).toBe(true);
+    expect(nightFocus?.onSite).toBe((nightFocus?.onduty ?? 0) + (nightFocus?.rest ?? 0));
+    expect(nightFocus?.onSite).toBe(nightBoard.staff.length);
+    expect(nightFocus?.onSite).toBeLessThan(120);
+    expect(nightFocus?.onSite).not.toBe(222);
+    expect(nightFocus?.rest).not.toBe(182);
+    const nightWarning = offClockWarning(night.now, "B2");
+    expect(nightWarning).toContain("唔喺 B2");
+    expect(nightWarning).toContain("唔會計入在場或休息");
+    expect(shortageAdvice(night.staffing!, night.now).text).toBe(nightWarning);
 
     const off = { ...demo, now: "00:00" };
     expect(shiftsActiveAt(off.now)).toEqual([]);
     expect(offClockWarning(off.now)).toContain("在場係 0");
+    expect(offClockWarning(off.now, "B2")).toContain("在場係 0");
     expect(shortageAdvice(off.staffing!, off.now).text).toBe(offClockWarning(off.now));
     const empty = officeFocus(off);
     expect(empty?.onSite).toBe(0);
     expect(empty?.onduty).toBe(0);
     expect(empty?.rest).toBe(0);
     expect(empty?.filled).toBe(0);
+    expect(empty?.total).toBe(40);
     expect(projectBoard(off).staff).toEqual([]);
+    expect(projectBoard(off).posts).toHaveLength(40);
 
     const moved = setShift(demo, "A");
     expect(moved.now).toBe("00:01");
     expect(shiftsActiveAt(moved.now)).toContain("A");
     const kept = setShift({ ...demo, now: "11:00" }, "B1");
     expect(kept.now).toBe("11:00");
+
+    const snapped = ensureStaffing({ ...demo, now: "01:10" });
+    expect(snapped.now).toBe("06:45");
+    expect(shiftsActiveAt(snapped.now)).toContain("B2");
+    expect(alignNowToSelectedShift(demo).now).toBe("13:10");
+    const overnight = ensureStaffing(setShift(demo, "A"));
+    expect(overnight.now).toBe("00:01");
   });
 
   it("edits another shift's cell without changing the selected shift", () => {

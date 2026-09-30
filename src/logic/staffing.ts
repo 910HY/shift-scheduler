@@ -340,10 +340,18 @@ export function setShift(state: BoardState, shiftId: ShiftId): BoardState {
   return { ...state, now, shiftName: shiftId, staffing: { ...current, shiftId, rules } };
 }
 
-/** Clock sits in a gap no shift covers. On-site must stay 0; those people are not at rest. */
-export function offClockWarning(now: string) {
-  if (shiftsActiveAt(now).length > 0) return null;
-  return `${now} 冇任何更當值。在場係 0，呢班人唔會當休息計。`;
+/**
+ * People outside the duty window for `now` are not on site and are not rest.
+ * A gap with no shift stays at 0. If another shift is on but the selected one is not, say so.
+ */
+export function offClockWarning(now: string, shiftId?: ShiftId) {
+  const active = shiftsActiveAt(now);
+  if (active.length === 0) return `${now} 冇任何更當值。在場係 0，呢班人唔會當休息計。`;
+  if (shiftId && !active.includes(shiftId)) {
+    const shift = shiftOf(shiftId);
+    return `現場 ${now} 唔喺 ${shiftId}（${shift.start}–${shift.end}）。而家當值係 ${active.join("、")}。${shiftId} 嘅人唔會計入在場或休息。`;
+  }
+  return null;
 }
 
 export function setPercent(state: BoardState, percent: number): BoardState {
@@ -497,7 +505,7 @@ export function setLoanEnd(state: BoardState, loanId: string, end: string | null
 }
 
 export function shortageAdvice(staffing: StaffingState, now: string) {
-  const offClock = offClockWarning(now);
+  const offClock = offClockWarning(now, staffing.shiftId);
   if (offClock) return { missing: [] as string[], text: offClock };
   const slots = slotStarts(staffing.shiftId);
   const index = slotIndexAt(slots, now);

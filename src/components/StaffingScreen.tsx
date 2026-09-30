@@ -96,7 +96,7 @@ export function StaffingScreen() {
   const issues = checkRoster(checkState).filter((issue) => issue.level === "error");
   const crew = crewFor(staffing);
   const advice = shortageAdvice(staffing, state.now);
-  const offClock = offClockWarning(state.now);
+  const offClock = offClockWarning(state.now, staffing.shiftId);
   const selectedSheet = rows.find((row) => rowMatches(row.id, selectedId)) ?? null;
   const selected = editableRow(selectedSheet, staffing.shiftId);
   const extreme = isExtreme(staffing.rules, staffing.shiftId);
@@ -580,35 +580,48 @@ function NowFloor({
   const away = shown.staff.filter((person) => nowPlace(shown, person) === "sl" || nowPlace(shown, person) === "uvl");
   const stillOn = shown.staff.filter((person) => person.id.startsWith("ov:") && nowPlace(shown, person) === "stand" && !shown.posts.some((post) => post.assigneeId === person.id));
   const outgoing = slotAt < 0 ? [] : rows.filter((row) => isLoanMarker(row.cells[slotAt] ?? ""));
+  const zoned = new Set(shown.zones.map((zone) => zone.id));
+  const loose = shown.posts.filter((post) => !zoned.has(post.zoneId));
+  const bay = (post: (typeof shown.posts)[number]) => {
+    const person = shown.staff.find((item) => item.id === post.assigneeId);
+    const place = person ? nowPlace(shown, person) : "off";
+    const tone = person ? (place === "stand" ? "is-onduty" : "is-break") : "is-vacant";
+    return (
+      <button
+        key={post.id}
+        type="button"
+        data-testid="floor-bay"
+        className={`bay ${tone} ${selectedPostId === post.id ? "is-selected" : ""}`}
+        onClick={() => {
+          onSelectPost(post.id);
+          if (person) onSelectPerson(person.id);
+          else if (selectedId) onPlace(selectedId, post.id);
+        }}
+      >
+        <span className="bay-code">{post.name}</span>
+        <span className="bay-sub">{person ? person.code : "空"}{person?.id.startsWith("loan:") ? " 借" : ""}</span>
+      </button>
+    );
+  };
   return (
     <div className="now-wrap" data-testid="floor-board">
+      <p className="floor-status" data-testid="floor-status">
+        場地 {shown.posts.length} 崗
+      </p>
       {shown.zones.map((zone) => (
         <section key={zone.id}>
           <h2>{zone.title}</h2>
           <div className="now-grid">
-            {shown.posts.filter((post) => post.zoneId === zone.id).map((post) => {
-              const person = shown.staff.find((item) => item.id === post.assigneeId);
-              const place = person ? nowPlace(shown, person) : "off";
-              const tone = person ? (place === "stand" ? "is-onduty" : "is-break") : "is-vacant";
-              return (
-                <button
-                  key={post.id}
-                  type="button"
-                  className={`bay ${tone} ${selectedPostId === post.id ? "is-selected" : ""}`}
-                  onClick={() => {
-                    onSelectPost(post.id);
-                    if (person) onSelectPerson(person.id);
-                    else if (selectedId) onPlace(selectedId, post.id);
-                  }}
-                >
-                  <span className="bay-code">{post.name}</span>
-                  <span className="bay-sub">{person ? person.code : "空"}{person?.id.startsWith("loan:") ? " 借" : ""}</span>
-                </button>
-              );
-            })}
+            {shown.posts.filter((post) => post.zoneId === zone.id).map(bay)}
           </div>
         </section>
       ))}
+      {loose.length > 0 && (
+        <section>
+          <h2>崗位</h2>
+          <div className="now-grid">{loose.map(bay)}</div>
+        </section>
+      )}
       {stillOn.length > 0 && (
         <section data-testid="other-shifts-on-duty">
           <h2>其他更仍在崗</h2>
