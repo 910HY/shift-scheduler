@@ -250,7 +250,7 @@ export function slotStarts(shiftId: ShiftId) {
   return slots;
 }
 
-/** Inclusive start, exclusive end. End may pass midnight as a value above 24:00. */
+/** Inclusive start, exclusive end. End may pass midnight as a value above 24:00. The last slot stops at duty end, so A releases posts at 06:45. */
 function slotRangeOf(shiftId: ShiftId, slots: string[], index: number): [number, number] | null {
   const slot = slots[index];
   if (!slot) return null;
@@ -951,7 +951,7 @@ export function projectBoard(state: BoardState): BoardState {
     const index = slotIndexAt(slots, state.now, shiftId);
     if (index < 0) continue;
     const slotStart = slots[index] ?? shift.start;
-    const slotEnd = formatMinute(timeToMinutes(slotStart) + SLOT_MINUTES);
+    const slotEnd = formatMinute(timeToMinutes(slotStart) + slotDuration(shiftId, slotStart));
     const selected = shiftId === staffing.shiftId;
     (plans.get(shiftId) ?? []).forEach((row, order) => {
       const cell = row.cells[index] ?? "";
