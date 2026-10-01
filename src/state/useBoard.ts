@@ -66,7 +66,7 @@ export function useBoard() {
     setPersist(true);
     setMismatch(false);
     setState(createAppSeed());
-    setNotice("已回復 B2 Arr Hall 示範。現場時刻是 13:10。");
+    setNotice("已回復 B2 Arr Hall 示範。現場時刻是 10:00。");
   }
 
   function acceptUpgrade() {

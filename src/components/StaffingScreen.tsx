@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { assignStaff } from "@/logic/board";
+import { splitStaffCode } from "@/logic/label";
 import { buildPreviewWorkbook } from "@/logic/previewXlsx";
 import { nowPlace, presenceTotals } from "@/logic/presence";
 import {
   EARLY_CELL,
+  FOCUS_BANDS,
   OFFICES,
   PERCENT_SHORTCUTS,
   SHIFTS,
@@ -44,6 +46,8 @@ import {
   setRowAllows,
   setRules,
   setShift,
+  shiftBoard,
+  shiftCovers,
   shiftOf,
   shiftRoster,
   shiftsActiveAt,
@@ -54,6 +58,7 @@ import {
   slotStarts,
 } from "@/logic/staffing";
 import { useBoard } from "@/state/useBoard";
+import { hongKongClock } from "@/logic/time";
 import type { OfficeId, PostKind, RosterRow, RuleSettings, ShiftId, StaffingState } from "@/types";
 
 const KINDS: { id: PostKind; label: string }[] = [
@@ -78,6 +83,12 @@ export function StaffingScreen() {
   const [earlyOpen, setEarlyOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
   const [shiftOpen, setShiftOpen] = useState(false);
+  const [focusId, setFocusId] = useState<ShiftId | "all">(() => {
+    const id = state.staffing?.shiftId;
+    return id && FOCUS_BANDS.some((band) => band.id === id) ? id : "all";
+  });
+  const [personOpen, setPersonOpen] = useState(false);
+  const clock = useHongKongClock();
 
   if (!staffing) return null;
 
@@ -88,7 +99,7 @@ export function StaffingScreen() {
   const overlap = combinedRoster(staffing);
   const slots = overlap.slots;
   const nativeSlots = slotStarts(staffing.shiftId);
-  const slotAt = slotIndexAt(nativeSlots, state.now);
+  const slotAt = slotIndexAt(nativeSlots, state.now, staffing.shiftId);
   const liveRows = rosterRows(staffing, staffing.officeId);
   const rows = draft ?? overlap.rows;
   const activeNow = shiftsActiveAt(state.now);
@@ -111,6 +122,28 @@ export function StaffingScreen() {
   function say(text: string) {
     setHint(text);
   }
+
+  function focusBand(shiftId: ShiftId) {
+    const next = setShift(state, shiftId);
+    const prepare = FOCUS_BANDS.find((band) => band.id === shiftId)?.prepare ?? next.now;
+    board.replace({ ...next, now: prepare });
+    setFocusId(shiftId);
+    setDraft(null);
+    setPersonOpen(false);
+  }
+
+  function showAllBands() {
+    setFocusId("all");
+    setPersonOpen(false);
+    board.replace({ ...state, now: clock.hhmm });
+  }
+
+  function openPerson(id: string) {
+    setSelectedId(id);
+    setPersonOpen(true);
+  }
+
+  const personTarget = personOpen ? resolvePerson(selectedId, staffing.shiftId) : null;
 
   function addPosts(kind: PostKind, count: number) {
     board.replace(addOpenPosts(state, kind, count));
@@ -218,6 +251,10 @@ export function StaffingScreen() {
               {presence.filled}／{presence.total}
             </p>
           </div>
+          <div data-testid="live-clock">
+            <p className="stat-kicker">而家（香港）</p>
+            <p className="live-clock">{clock.hms}</p>
+          </div>
           <label>
             <p className="stat-kicker">現場</p>
             <input
@@ -231,6 +268,41 @@ export function StaffingScreen() {
           </label>
         </div>
       </header>
+
+      <section className="focus-band" aria-label="準備邊個更" data-testid="focus-band">
+        <p className="focus-band-label">準備邊個更</p>
+        <div className="focus-band-list" role="group">
+          {FOCUS_BANDS.map((band) => {
+            const shift = shiftOf(band.id);
+            const on = focusId === band.id;
+            return (
+              <button
+                key={band.id}
+                type="button"
+                data-testid={`focus-${band.id}`}
+                data-shift={band.id}
+                aria-pressed={on}
+                className={on ? "is-on" : ""}
+                onClick={() => focusBand(band.id)}
+              >
+                <strong>{band.id}</strong>
+                <span>{shift.start}–{shift.end}{band.id === "A" ? " 跨日" : ""}</span>
+                {shiftCovers(band.id, clock.hhmm) && <em>而家</em>}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            data-testid="focus-all"
+            aria-pressed={focusId === "all"}
+            className={focusId === "all" ? "is-on" : ""}
+            onClick={showAllBands}
+          >
+            <strong>全部</strong>
+            <span>重疊都見</span>
+          </button>
+        </div>
+      </section>
 
       <section className="ops-bar" aria-label="開崗">
         <div className="ops-offices span-2" role="tablist" aria-label="區">
@@ -427,8 +499,8 @@ export function StaffingScreen() {
       )}
       {issues.length > 0 && (
         <ul className="issue-list" data-testid="issue-list">
-          {issues.slice(0, 4).map((issue) => (
-            <li key={`${issue.rule}-${issue.message}`}><span className="dot" />{issue.message}</li>
+          {issues.slice(0, 4).map((issue, index) => (
+            <li key={`${issue.rule}-${index}`}><span className="dot" />{issue.message}</li>
           ))}
         </ul>
       )}
@@ -441,17 +513,19 @@ export function StaffingScreen() {
               shown={shown}
               rows={liveRows}
               slotAt={slotAt}
+              focusId={focusId}
               clockNote={slotAt >= 0 ? `這一格 ${nativeSlots[slotAt]}。點人再點空崗，即可對調。` : `${state.now} 不在 ${staffing.shiftId}。仍在崗：${activeNow.join("、") || "沒有更"}`}
               selectedId={selectedId}
               selectedPostId={selectedPostId}
               onSelectPost={(postId) => setSelectedPostId(postId)}
               onSelectPerson={(id) => setSelectedId(id)}
+              onOpenPerson={openPerson}
               onPlace={place}
             />
           ) : narrow ? (
-            <StaffCards rows={rows} slots={slots} issues={issues.map((issue) => issue.message)} respectPreference={staffing.rules.respectPreference} onEdit={openEditor} onSelect={setSelectedId} selectedId={selectedId} />
+            <StaffCards rows={rows} slots={slots} focusId={focusId} issues={issues.map((issue) => issue.message)} respectPreference={staffing.rules.respectPreference} onEdit={openEditor} onSelect={setSelectedId} onOpenPerson={openPerson} selectedId={selectedId} />
           ) : (
-            <RosterTable rows={rows} slots={slots} issues={issues.map((issue) => issue.message)} respectPreference={staffing.rules.respectPreference} onEdit={openEditor} onSelect={setSelectedId} selectedId={selectedId} />
+            <RosterTable rows={rows} slots={slots} focusId={focusId} issues={issues.map((issue) => issue.message)} respectPreference={staffing.rules.respectPreference} onEdit={openEditor} onSelect={setSelectedId} onOpenPerson={openPerson} selectedId={selectedId} />
           )}
         </main>
         {!narrow && <aside className="v10-side">{settings}</aside>}
@@ -510,6 +584,8 @@ export function StaffingScreen() {
                   board.replace(setShift(state, shift.id));
                   setDraft(null);
                   setShiftOpen(false);
+                  setFocusId(FOCUS_BANDS.some((band) => band.id === shift.id) ? shift.id : "all");
+                  setPersonOpen(false);
                 }}
               >
                 <strong>{shift.id}</strong>
@@ -580,6 +656,16 @@ export function StaffingScreen() {
         </section>
       )}
 
+      {personTarget && (
+        <PersonSheet
+          staffing={staffing}
+          date={state.date}
+          office={focus.label}
+          target={personTarget}
+          onClose={() => setPersonOpen(false)}
+        />
+      )}
+
       <footer className="v10-foot">
         <Button type="button" variant="outline" onClick={board.resetDemo}>回復示範</Button>
         <Button type="button" variant="outline" data-testid="site-overview-toggle" onClick={() => setSiteOpen((open) => !open)}>
@@ -595,21 +681,25 @@ function NowFloor({
   shown,
   rows,
   slotAt,
+  focusId,
   clockNote,
   selectedId,
   selectedPostId,
   onSelectPost,
   onSelectPerson,
+  onOpenPerson,
   onPlace,
 }: {
   shown: ReturnType<typeof projectBoard>;
   rows: RosterRow[];
   slotAt: number;
+  focusId: ShiftId | "all";
   clockNote: string;
   selectedId: string | null;
   selectedPostId: string | null;
   onSelectPost: (id: string) => void;
   onSelectPerson: (id: string) => void;
+  onOpenPerson: (id: string) => void;
   onPlace: (staffId: string, postId: string | null) => void;
 }) {
   const resting = shown.staff.filter((person) => nowPlace(shown, person) === "mb" || nowPlace(shown, person) === "r");
@@ -622,20 +712,28 @@ function NowFloor({
     const person = shown.staff.find((item) => item.id === post.assigneeId);
     const place = person ? nowPlace(shown, person) : "off";
     const tone = person ? (place === "stand" ? "is-onduty" : "is-break") : "is-vacant";
+    const dimmed = Boolean(person && focusId !== "all" && person.shift !== focusId);
     return (
       <button
         key={post.id}
         type="button"
         data-testid="floor-bay"
-        className={`bay ${tone} ${selectedPostId === post.id ? "is-selected" : ""}`}
+        data-shift={person?.shift}
+        className={`bay ${tone} ${selectedPostId === post.id ? "is-selected" : ""} ${dimmed ? "is-dimmed" : ""}`}
         onClick={() => {
           onSelectPost(post.id);
           if (person) onSelectPerson(person.id);
           else if (selectedId) onPlace(selectedId, post.id);
         }}
+        onDoubleClick={() => {
+          if (person) onOpenPerson(person.id);
+        }}
       >
         <span className="bay-code">{post.name}</span>
-        <span className="bay-sub">{person ? person.code : "空"}{person?.id.startsWith("loan:") ? " 借" : ""}</span>
+        <span className="bay-sub">
+          {person ? <StaffBadge code={person.code} shift={person.shift} /> : "空"}
+          {person?.id.startsWith("loan:") ? " 借" : ""}
+        </span>
       </button>
     );
   };
@@ -643,6 +741,9 @@ function NowFloor({
     <div className="now-wrap" data-testid="floor-board">
       <p className="floor-status" data-testid="floor-status">
         場地 {shown.posts.length} 崗
+        <button type="button" data-testid="open-person" disabled={!selectedId} onClick={() => selectedId && onOpenPerson(selectedId)}>
+          個人更表
+        </button>
       </p>
       {shown.zones.map((zone) => (
         <section key={zone.id}>
@@ -663,8 +764,9 @@ function NowFloor({
           <h2>其他更仍在崗</h2>
           <div className="chip-row">
             {stillOn.map((person) => (
-              <button key={person.id} type="button" className="person-chip is-onduty" onClick={() => onSelectPerson(person.id)}>
-                {person.code}{person.dutyPost ? ` · ${person.dutyPost}` : ""}
+              <button key={person.id} type="button" className={`person-chip is-onduty ${focusId !== "all" && person.shift !== focusId ? "is-dimmed" : ""}`} onClick={() => onSelectPerson(person.id)} onDoubleClick={() => onOpenPerson(person.id)}>
+                <StaffBadge code={person.code} shift={person.shift} />
+                {person.dutyPost ? ` · ${person.dutyPost}` : ""}
               </button>
             ))}
           </div>
@@ -674,11 +776,11 @@ function NowFloor({
         <h2>休息</h2>
         <div className="chip-row">
           {resting.map((person) => (
-            <button key={person.id} type="button" className="person-chip" onClick={() => {
+            <button key={person.id} type="button" className={`person-chip ${focusId !== "all" && person.shift !== focusId ? "is-dimmed" : ""}`} onClick={() => {
               onSelectPerson(person.id);
               if (selectedPostId) onPlace(person.id, selectedPostId);
-            }}>
-              {person.code} {nowPlace(shown, person) === "mb" ? "MB" : "R"}
+            }} onDoubleClick={() => onOpenPerson(person.id)}>
+              <StaffBadge code={person.code} shift={person.shift} /> {nowPlace(shown, person) === "mb" ? "MB" : "R"}
             </button>
           ))}
           {resting.length === 0 && <p>這一格沒有人在休息。</p>}
@@ -688,10 +790,14 @@ function NowFloor({
         <section>
           <h2>不在本區崗</h2>
           <div className="chip-row">
-            {away.map((person) => <span key={person.id} className="person-chip is-away" data-testid="early-out">{person.code} 早走</span>)}
+            {away.map((person) => (
+              <span key={person.id} className="person-chip is-away" data-testid="early-out">
+                <StaffBadge code={person.code} shift={person.shift} /> 早走
+              </span>
+            ))}
             {outgoing.map((row) => (
               <span key={row.id} className="person-chip is-loan" data-testid="loaned-out" title={row.cells[slotAt]}>
-                {row.code} 借出
+                <StaffBadge code={row.code} shift={shown.shiftName} /> 借出
               </span>
             ))}
           </div>
@@ -705,18 +811,22 @@ function NowFloor({
 function RosterTable({
   rows,
   slots,
+  focusId,
   issues,
   respectPreference,
   selectedId,
   onSelect,
+  onOpenPerson,
   onEdit,
 }: {
   rows: RosterRow[];
   slots: string[];
+  focusId: ShiftId | "all";
   issues: string[];
   respectPreference: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onOpenPerson: (id: string) => void;
   onEdit: (rowId: string, index: number, value: string) => void;
 }) {
   return (
@@ -729,15 +839,19 @@ function RosterTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className={rowMatches(row.id, selectedId) ? "is-selected" : ""}>
+          {rows.map((row) => {
+            const shift = splitStaffCode(row.code).shift;
+            const dimmed = focusId !== "all" && shift !== focusId;
+            return (
+            <tr key={row.id} data-shift={shift} className={`${rowMatches(row.id, selectedId) ? "is-selected" : ""} ${dimmed ? "is-dimmed" : ""}`}>
               <th>
                 <button type="button" onClick={() => onSelect(row.id)}>
                   {issues.some((issue) => mentionsCode(row.code, issue)) && <span className="dot" />}
-                  {row.id.startsWith("loan:") && <span className="loan-in">借</span>}
-                  {row.code}
+                  {row.id.startsWith("ov:") && row.id.includes(":loan:") && <span className="loan-in">借</span>}
+                  <StaffBadge code={row.code} />
                   {row.allows.length > 0 && <span className="pref-tag">{row.allows.map((kind) => KINDS.find((item) => item.id === kind)?.label ?? kind).join("、")}</span>}
                 </button>
+                <button type="button" className="person-open" data-testid="row-person" onClick={() => onOpenPerson(row.id)}>個人</button>
               </th>
               {row.cells.map((cell, index) => (
                 <td key={`${row.id}-${slots[index]}`}>
@@ -747,7 +861,8 @@ function RosterTable({
                 </td>
               ))}
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -757,34 +872,41 @@ function RosterTable({
 function StaffCards({
   rows,
   slots,
+  focusId,
   issues,
   respectPreference,
   selectedId,
   onSelect,
+  onOpenPerson,
   onEdit,
 }: {
   rows: RosterRow[];
   slots: string[];
+  focusId: ShiftId | "all";
   issues: string[];
   respectPreference: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onOpenPerson: (id: string) => void;
   onEdit: (rowId: string, index: number, value: string) => void;
 }) {
   return (
     <div className="staff-cards" data-testid="staff-cards">
       {rows.map((row) => {
         const problem = issues.find((issue) => mentionsCode(row.code, issue));
+        const shift = splitStaffCode(row.code).shift;
+        const dimmed = focusId !== "all" && shift !== focusId;
         return (
-          <article key={row.id} className={rowMatches(row.id, selectedId) ? "is-selected" : ""}>
+          <article key={row.id} data-shift={shift} className={`${rowMatches(row.id, selectedId) ? "is-selected" : ""} ${dimmed ? "is-dimmed" : ""}`}>
             <header>
               <button type="button" onClick={() => onSelect(row.id)}>
                 {problem && <span className="dot" />}
-                {row.id.startsWith("loan:") && <span className="loan-in">借</span>}
-                <strong>{row.code}</strong>
+                {row.id.includes(":loan:") && <span className="loan-in">借</span>}
+                <StaffBadge code={row.code} />
                 {row.allows.length > 0 && <span className="pref-tag">{row.allows.map((kind) => KINDS.find((item) => item.id === kind)?.label ?? kind).join("、")}</span>}
               </button>
-              {row.cells.some((cell) => isLoanMarker(cell)) && <span className="loan-out">on loan</span>}
+              <button type="button" className="person-open" data-testid="row-person" onClick={() => onOpenPerson(row.id)}>個人</button>
+              {row.cells.some((cell) => isLoanMarker(cell)) && <span className="loan-out">借出</span>}
             </header>
             {problem && <p className="person-issue">{problem}</p>}
             <div className="timeline">
@@ -1106,4 +1228,93 @@ function useNarrow() {
     return () => media.removeEventListener("change", onChange);
   }, []);
   return narrow;
+}
+
+function useHongKongClock() {
+  const [clock, setClock] = useState(() => hongKongClock());
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(hongKongClock()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return clock;
+}
+
+function StaffBadge({ code, shift }: { code: string; shift?: string }) {
+  const badge = splitStaffCode(code, shift);
+  return (
+    <span className="staff-id" data-shift={badge.shift || undefined} data-testid="staff-badge" title={badge.label}>
+      {badge.shift && <span className="staff-shift">{badge.shift}</span>}
+      <span className="staff-code">{badge.code || badge.label}</span>
+    </span>
+  );
+}
+
+function resolvePerson(selectedId: string | null, fallback: ShiftId): { shiftId: ShiftId; rowId: string } | null {
+  if (!selectedId) return null;
+  const parsed = parseOverlapRowId(selectedId);
+  if (parsed) return parsed;
+  return { shiftId: fallback, rowId: selectedId };
+}
+
+function printCell(value: string) {
+  if (!value) return "—";
+  if (isLoanMarker(value)) return "借";
+  return value;
+}
+
+function PersonSheet({
+  staffing,
+  date,
+  office,
+  target,
+  onClose,
+}: {
+  staffing: StaffingState;
+  date: string;
+  office: string;
+  target: { shiftId: ShiftId; rowId: string };
+  onClose: () => void;
+}) {
+  const board = shiftBoard(staffing, target.shiftId);
+  const row = board.rows.find((item) => item.id === target.rowId);
+  const shift = shiftOf(target.shiftId);
+  const badge = splitStaffCode(row?.code ?? "", target.shiftId);
+  return (
+    <section className="person-sheet" data-testid="person-sheet" role="dialog" aria-label="個人更表">
+      <header className="person-sheet-head">
+        <div>
+          <p className="stat-kicker">個人崗位</p>
+          <h2>{badge.label || target.rowId}</h2>
+          <p>
+            更 {target.shiftId} · 工號 {badge.code || "—"} · {shift.start}–{shift.end}
+            {target.shiftId === "A" ? "（跨日）" : ""} · {office} · {date}
+          </p>
+        </div>
+        <div className="no-print quick-row">
+          <Button type="button" data-testid="print-person" onClick={() => window.print()}>列印</Button>
+          <Button type="button" variant="outline" onClick={onClose}>返回</Button>
+        </div>
+      </header>
+      {row ? (
+        <table className="person-table">
+          <thead>
+            <tr>
+              <th>時間</th>
+              <th>崗位</th>
+            </tr>
+          </thead>
+          <tbody>
+            {board.slots.map((slot, index) => (
+              <tr key={slot}>
+                <th>{slot}</th>
+                <td>{printCell(row.cells[index] ?? "")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p>搵唔到呢個人嘅更表。</p>
+      )}
+    </section>
+  );
 }

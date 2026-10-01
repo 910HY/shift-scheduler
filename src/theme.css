@@ -125,6 +125,15 @@ body {
   color-scheme: dark;
 }
 
+.topbar .live-clock {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+}
+
 .topbar .date-input {
   height: 32px;
   width: 9.2rem;
@@ -935,7 +944,151 @@ select {
 .roster-scroll tr.is-selected th { outline: 2px solid #3b6fd8; }
 
 .bay-code { font-size: 16px; font-weight: 650; }
-.bay-sub { font-size: 12px; }
+.bay-sub { font-size: 12px; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 3px; }
+
+.staff-id {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  max-width: 100%;
+  font-weight: 750;
+  line-height: 1.2;
+}
+.staff-id[data-shift="B2"] { --shift-bg: #1d4f91; }
+.staff-id[data-shift="B1"] { --shift-bg: #0b7a53; }
+.staff-id[data-shift="C2"] { --shift-bg: #b45309; }
+.staff-id[data-shift="E1"] { --shift-bg: #6d28d9; }
+.staff-id[data-shift="E3"] { --shift-bg: #c2410c; }
+.staff-id[data-shift="E4"] { --shift-bg: #be123c; }
+.staff-id[data-shift="E"] { --shift-bg: #0369a1; }
+.staff-id[data-shift="A"] { --shift-bg: #334155; }
+.staff-shift {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  padding: 0 4px;
+  background: var(--shift-bg, #334155);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1.45;
+}
+.staff-code { font-size: 13px; font-weight: 800; }
+.bay.is-dimmed,
+.person-chip.is-dimmed,
+.roster-scroll tr.is-dimmed,
+.staff-cards article.is-dimmed { opacity: 0.5; }
+
+.focus-band {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 8px 16px 12px;
+  background: #141820;
+  color: #fff;
+}
+.focus-band-label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+.focus-band-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.focus-band button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 96px;
+  min-height: 52px;
+  border-radius: 10px;
+  border: 1px solid #3a4150;
+  background: #0e1218;
+  color: #fff;
+  padding: 6px 10px;
+  text-align: left;
+}
+.focus-band button strong { font-size: 16px; font-weight: 800; line-height: 1.1; }
+.focus-band button span,
+.focus-band button em { font-size: 12px; font-style: normal; font-weight: 650; font-variant-numeric: tabular-nums; }
+.focus-band button.is-on {
+  background: #fff;
+  color: #141820;
+  border-color: #fff;
+}
+.focus-band button[data-shift="B2"].is-on { box-shadow: inset 4px 0 0 #1d4f91; }
+.focus-band button[data-shift="E1"].is-on { box-shadow: inset 4px 0 0 #6d28d9; }
+.focus-band button[data-shift="E"].is-on { box-shadow: inset 4px 0 0 #0369a1; }
+.focus-band button[data-shift="A"].is-on { box-shadow: inset 4px 0 0 #334155; }
+
+.floor-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.floor-status button,
+.person-open {
+  min-height: 32px;
+  border-radius: 8px;
+  border: 1px solid #c5cad3;
+  background: #fff;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.roster-scroll th .person-open { margin: 0 6px 6px; }
+
+.person-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  overflow: auto;
+  background: #fff;
+  color: #111;
+  padding: 24px 20px 48px;
+}
+.person-sheet-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 16px;
+}
+.person-sheet h2 { margin: 0; font-size: 28px; font-weight: 800; }
+.person-sheet p { margin: 4px 0 0; }
+.person-table { border-collapse: collapse; width: min(520px, 100%); }
+.person-table th,
+.person-table td {
+  border: 1px solid #111;
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 15px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.person-table thead th { background: #f3f4f6; }
+
+@media print {
+  .v10-shell:has(.person-sheet) > :not(.person-sheet) { display: none !important; }
+  .person-sheet {
+    position: static !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    color: #000 !important;
+    background: #fff !important;
+  }
+  .no-print { display: none !important; }
+  .person-table tr { break-inside: avoid; }
+  .person-table th,
+  .person-table td { color: #000 !important; background: #fff !important; }
+}
 
 .person-chip {
   display: inline-flex;

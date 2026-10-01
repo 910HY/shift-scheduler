@@ -49,3 +49,19 @@ export function isOnBreak(staff: Staff, now: string): boolean {
 export function formatSpan(start: string, end: string): string {
   return `${start}–${end}`;
 }
+
+/** Wall clock in Asia/Hong_Kong, 24-hour. */
+export function hongKongClock(date = new Date()): { hhmm: string; hms: string } {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Hong_Kong",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "00";
+  const hour = pick("hour");
+  const minute = pick("minute");
+  const second = pick("second");
+  return { hhmm: `${hour}:${minute}`, hms: `${hour}:${minute}:${second}` };
+}
