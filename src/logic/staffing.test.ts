@@ -28,6 +28,7 @@ import {
   setCell,
   setRowAllows,
   setShift,
+  shiftOf,
   shiftsActiveAt,
   shortageAdvice,
   siteOverview,
@@ -554,6 +555,53 @@ describe("generated roster posts", () => {
 });
 
 describe("overlapping shifts", () => {
+  it("covers every open post when A hands off to B2 at 06:45", () => {
+    const staffing = {
+      ...createDefaultStaffing(),
+      books: {},
+      percent: 100,
+    };
+    expect(shiftOf("A").end).toBe("06:45");
+    expect(slotStarts("A").at(-1)).toBe("06:30");
+    expect(shiftsActiveAt("06:44")).toEqual(["A"]);
+    expect(shiftsActiveAt("06:45")).toEqual(["B2", "B1"]);
+
+    const filledAt = (now: string, officeId: "arr-hall" | "arr-kiosk") => {
+      const shown = projectBoard({ ...board(), now, staffing: { ...staffing, officeId } });
+      const filled = shown.posts.filter((post) => post.assigneeId).length;
+      return { shown, filled, total: shown.posts.length };
+    };
+
+    const before = filledAt("06:44", "arr-hall");
+    expect(before.total).toBe(40);
+    expect(before.filled).toBe(40);
+    expect(before.shown.staff.every((person) => person.shift === "A")).toBe(true);
+
+    for (const now of ["06:45", "07:00", "07:14"]) {
+      const hall = filledAt(now, "arr-hall");
+      expect(hall.total).toBe(40);
+      expect(hall.filled).toBe(40);
+      expect(hall.shown.staff.some((person) => person.shift === "A")).toBe(false);
+      expect(hall.shown.staff.some((person) => person.shift === "B2" && person.dutyPost)).toBe(true);
+      expect(hall.shown.staff.some((person) => person.shift === "B1" && person.dutyPost)).toBe(true);
+      const duty = hall.shown.staff.map((person) => person.dutyPost).filter((post): post is string => Boolean(post));
+      expect(new Set(duty).size).toBe(duty.length);
+      expect(duty.length).toBe(40);
+
+      const kiosk = filledAt(now, "arr-kiosk");
+      expect(kiosk.total).toBe(12);
+      expect(kiosk.filled).toBe(12);
+      expect(kiosk.shown.staff.some((person) => person.shift === "A")).toBe(false);
+    }
+
+    const roster = combinedRoster(staffing, "preview");
+    const morning = postsAt(roster, "06:45");
+    expect(morning.size).toBe(40);
+    for (const names of morning.values()) expect(names).toHaveLength(1);
+    expect([...morning.values()].flat().some((code) => code.startsWith("A "))).toBe(false);
+    expect([...morning.values()].flat().some((code) => code.startsWith("B2 "))).toBe(true);
+  });
+
   it("keeps B1 and C2 on the timeline after B2 ends at 13:15", () => {
     const staffing = {
       ...createDefaultStaffing(),
@@ -564,8 +612,8 @@ describe("overlapping shifts", () => {
       percent: null,
     };
     const roster = combinedRoster(staffing, "preview");
-    expect(roster.shifts).toEqual(["B2", "B1", "C2", "E1", "A"]);
-    expect(roster.slots[0]).toBe("06:30");
+    expect(roster.shifts).toEqual(["B2", "B1", "C2", "E1"]);
+    expect(roster.slots[0]).toBe("06:45");
     const at1245 = roster.slots.indexOf("12:45");
     const at1315 = roster.slots.indexOf("13:15");
     const b2 = roster.rows.filter((row) => row.code.startsWith("B2 "));
