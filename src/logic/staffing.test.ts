@@ -18,6 +18,7 @@ import {
   hallMax,
   isExtreme,
   isRestCode,
+  FOCUS_BANDS,
   officeFocus,
   offClockWarning,
   openPostCodes,
@@ -28,7 +29,6 @@ import {
   setCell,
   setRowAllows,
   setShift,
-  shiftOf,
   shiftsActiveAt,
   shortageAdvice,
   siteOverview,
@@ -40,6 +40,8 @@ import {
   setOpenCounts,
   setPercent,
   setRules,
+  shiftCovers,
+  shiftOf,
   siteCapacity,
   slotIndexAt,
   slotStarts,
@@ -128,8 +130,9 @@ describe("office focus", () => {
     const site = siteOverview(state);
     expect(site.total).toBe(104);
     expect(site.onSite).toBeGreaterThan(hall!.onSite);
-    const overlapping = officeFocus({ ...board(), now: "13:10" }, "arr-hall");
-    expect(shiftsActiveAt("13:10")).toEqual(["B2", "B1", "C2", "E1"]);
+    const overlapping = officeFocus({ ...board(), now: "13:09" }, "arr-hall");
+    expect(shiftsActiveAt("13:09")).toEqual(expect.arrayContaining(["B2", "B1", "C2"]));
+    expect(shiftsActiveAt("13:10")).toEqual(["B1", "C2", "E1"]);
     expect(overlapping?.onSite).toBeGreaterThan(52);
   });
 });
@@ -562,7 +565,8 @@ describe("overlapping shifts", () => {
       percent: 100,
     };
     expect(shiftOf("A").end).toBe("06:45");
-    expect(slotStarts("A").at(-1)).toBe("06:30");
+    expect(slotIndexAt(slotStarts("A"), "06:44", "A")).toBeGreaterThanOrEqual(0);
+    expect(slotIndexAt(slotStarts("A"), "06:45", "A")).toBe(-1);
     expect(shiftsActiveAt("06:44")).toEqual(["A"]);
     expect(shiftsActiveAt("06:45")).toEqual(["B2", "B1"]);
 
@@ -602,7 +606,7 @@ describe("overlapping shifts", () => {
     expect([...morning.values()].flat().some((code) => code.startsWith("B2 "))).toBe(true);
   });
 
-  it("keeps B1 and C2 on the timeline after B2 ends at 13:15", () => {
+  it("keeps B1 and C2 on the timeline after B2 ends at 13:10", () => {
     const staffing = {
       ...createDefaultStaffing(),
       counters: 2,
@@ -612,7 +616,7 @@ describe("overlapping shifts", () => {
       percent: null,
     };
     const roster = combinedRoster(staffing, "preview");
-    expect(roster.shifts).toEqual(["B2", "B1", "C2", "E1"]);
+    expect(roster.shifts).toEqual(["B2", "B1", "C2"]);
     expect(roster.slots[0]).toBe("06:45");
     const at1245 = roster.slots.indexOf("12:45");
     const at1315 = roster.slots.indexOf("13:15");
@@ -752,7 +756,7 @@ describe("overlapping shifts", () => {
 
   it("counts only people whose duty window covers now, and shows 0 off the clock", () => {
     const demo = createAppSeed();
-    expect(demo.now).toBe("13:10");
+    expect(demo.now).toBe("10:00");
     expect(crewFor(demo.staffing!)).toBe(52);
     expect(openPostCodes("arr-hall", demo.staffing!)).toHaveLength(40);
     const focus = officeFocus(demo);
@@ -790,32 +794,74 @@ describe("overlapping shifts", () => {
     expect(nightWarning).toContain("唔會計入在場或休息");
     expect(shortageAdvice(night.staffing!, night.now).text).toBe(nightWarning);
 
-    const off = { ...demo, now: "00:00" };
-    expect(shiftsActiveAt(off.now)).toEqual([]);
-    expect(offClockWarning(off.now)).toContain("在場係 0");
-    expect(offClockWarning(off.now, "B2")).toContain("在場係 0");
-    expect(shortageAdvice(off.staffing!, off.now).text).toBe(offClockWarning(off.now));
-    const empty = officeFocus(off);
-    expect(empty?.onSite).toBe(0);
-    expect(empty?.onduty).toBe(0);
-    expect(empty?.rest).toBe(0);
-    expect(empty?.filled).toBe(0);
-    expect(empty?.total).toBe(40);
-    expect(projectBoard(off).staff).toEqual([]);
-    expect(projectBoard(off).posts).toHaveLength(40);
+    const midnight = { ...demo, now: "00:00" };
+    expect(shiftsActiveAt(midnight.now)).toContain("A");
+    expect(projectBoard(midnight).staff.length).toBeGreaterThan(0);
+    expect(projectBoard(midnight).staff.every((person) => person.shift === "A")).toBe(true);
+    expect(offClockWarning("06:45", "A")).toContain("唔喺 A");
 
     const moved = setShift(demo, "A");
-    expect(moved.now).toBe("00:01");
+    expect(moved.now).toBe("22:15");
     expect(shiftsActiveAt(moved.now)).toContain("A");
     const kept = setShift({ ...demo, now: "11:00" }, "B1");
     expect(kept.now).toBe("11:00");
 
     const snapped = ensureStaffing({ ...demo, now: "01:10" });
-    expect(snapped.now).toBe("06:45");
+    expect(snapped.now).toBe("10:00");
     expect(shiftsActiveAt(snapped.now)).toContain("B2");
-    expect(alignNowToSelectedShift(demo).now).toBe("13:10");
+    expect(alignNowToSelectedShift(demo).now).toBe("10:00");
     const overnight = ensureStaffing(setShift(demo, "A"));
-    expect(overnight.now).toBe("00:01");
+    expect(overnight.now).toBe("22:15");
+  });
+
+  it("hands A to B at 06:45 and tiles the day without a vacuum", () => {
+    expect(shiftOf("B2")).toMatchObject({ start: "06:45", end: "13:10" });
+    expect(shiftOf("E1")).toMatchObject({ start: "13:10", end: "19:25" });
+    expect(shiftOf("E")).toMatchObject({ start: "19:25", end: "22:15" });
+    expect(shiftOf("A")).toMatchObject({ start: "22:15", end: "06:45" });
+
+    expect(shiftsActiveAt("06:44")).toContain("A");
+    expect(shiftsActiveAt("06:44")).not.toContain("B2");
+    expect(shiftsActiveAt("06:45")).toEqual(expect.arrayContaining(["B2", "B1"]));
+    expect(shiftsActiveAt("06:45")).not.toContain("A");
+    expect(shiftsActiveAt("13:09")).toContain("B2");
+    expect(shiftsActiveAt("13:10")).not.toContain("B2");
+    expect(shiftsActiveAt("13:10")).toContain("E1");
+    expect(shiftsActiveAt("19:24")).toContain("E1");
+    expect(shiftsActiveAt("19:25")).toContain("E");
+    expect(shiftsActiveAt("19:25")).not.toContain("E1");
+    expect(shiftsActiveAt("22:14")).toContain("E");
+    expect(shiftsActiveAt("22:14")).not.toContain("A");
+    expect(shiftsActiveAt("22:15")).toContain("A");
+    expect(shiftsActiveAt("22:15")).not.toContain("E");
+    expect(shiftsActiveAt("00:00")).toContain("A");
+    expect(shiftsActiveAt("02:00")).toEqual(["A"]);
+    expect(shiftsActiveAt("23:00")).toContain("A");
+    expect(shiftsActiveAt("10:00")).toEqual(expect.arrayContaining(["B2", "B1"]));
+    expect(shiftsActiveAt("11:15")).toEqual(expect.arrayContaining(["B2", "B1", "C2"]));
+    expect(shiftsActiveAt("15:00")).toEqual(expect.arrayContaining(["E1", "C2", "E3"]));
+
+    for (let minute = 0; minute < 24 * 60; minute += 1) {
+      const clock = `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+      expect(shiftsActiveAt(clock).length, clock).toBeGreaterThan(0);
+    }
+
+    const b2 = slotStarts("B2");
+    expect(b2[0]).toBe("06:45");
+    expect(b2.at(-1)).toBe("12:45");
+    expect(slotIndexAt(b2, "13:09", "B2")).toBe(b2.length - 1);
+    expect(slotIndexAt(b2, "13:10", "B2")).toBe(-1);
+
+    const overnight = slotStarts("A");
+    expect(overnight[0]).toBe("22:15");
+    expect(overnight.at(-1)).toBe("06:15");
+    expect(slotIndexAt(overnight, "23:00", "A")).toBeGreaterThanOrEqual(0);
+    expect(slotIndexAt(overnight, "00:00", "A")).toBeGreaterThanOrEqual(0);
+    expect(slotIndexAt(overnight, "02:00", "A")).toBeGreaterThanOrEqual(0);
+    expect(slotIndexAt(overnight, "06:44", "A")).toBe(overnight.length - 1);
+    expect(slotIndexAt(overnight, "06:45", "A")).toBe(-1);
+
+    for (const band of FOCUS_BANDS) expect(shiftCovers(band.id, band.prepare)).toBe(true);
   });
 
   it("edits another shift's cell without changing the selected shift", () => {

@@ -1,4 +1,4 @@
-import { createDefaultStaffing, shiftOf, shiftsActiveAt } from "@/logic/staffing";
+import { createDefaultStaffing, FOCUS_BANDS, shiftOf, shiftsActiveAt } from "@/logic/staffing";
 import type { BoardState, Staff } from "@/types";
 
 function person(
@@ -80,7 +80,7 @@ export function createSeed(): BoardState {
 
 /** V10 four-office roster. The legacy seed stays for the earlier presence tests. */
 export function createAppSeed(): BoardState {
-  return { ...createSeed(), shiftName: "B2", staffing: createDefaultStaffing() };
+  return { ...createSeed(), now: "10:00", shiftName: "B2", staffing: createDefaultStaffing() };
 }
 
 /** Demo and restored boards open inside the selected shift. A manual clock change stays put. */
@@ -88,7 +88,8 @@ export function alignNowToSelectedShift(state: BoardState): BoardState {
   const shiftId = state.staffing?.shiftId;
   if (!shiftId) return state;
   if (shiftsActiveAt(state.now).includes(shiftId)) return state;
-  return { ...state, now: shiftOf(shiftId).start };
+  const prepare = FOCUS_BANDS.find((band) => band.id === shiftId)?.prepare ?? shiftOf(shiftId).start;
+  return { ...state, now: prepare };
 }
 
 export function ensureStaffing(state: BoardState): BoardState {

@@ -28,14 +28,22 @@ export type ShiftDef = {
 };
 
 export const SHIFTS: ShiftDef[] = [
-  { id: "B2", start: "06:45", end: "13:15", hours: 6.5, meal: false },
+  { id: "B2", start: "06:45", end: "13:10", hours: 6.5, meal: false },
   { id: "B1", start: "06:45", end: "14:45", hours: 8, meal: true, mealStart: "11:00" },
   { id: "C2", start: "10:15", end: "18:15", hours: 8, meal: true, mealStart: "11:00" },
-  { id: "E1", start: "13:10", end: "19:40", hours: 6.5, meal: false },
+  { id: "E1", start: "13:10", end: "19:25", hours: 6.5, meal: false },
   { id: "E3", start: "14:30", end: "22:30", hours: 8, meal: true, mealStart: "18:00" },
   { id: "E4", start: "15:45", end: "23:45", hours: 8, meal: true, mealStart: "18:00" },
-  { id: "E", start: "18:00", end: "23:59", hours: 6, meal: false },
-  { id: "A", start: "00:01", end: "06:45", hours: 7, meal: false },
+  { id: "E", start: "19:25", end: "22:15", hours: 170 / 60, meal: false },
+  { id: "A", start: "22:15", end: "06:45", hours: 8.5, meal: false },
+];
+
+/** Handoff bands the floor prepares. Clock windows tile the day; other shifts still overlap inside them. */
+export const FOCUS_BANDS: { id: ShiftId; prepare: string }[] = [
+  { id: "B2", prepare: "10:00" },
+  { id: "E1", prepare: "15:00" },
+  { id: "E", prepare: "20:50" },
+  { id: "A", prepare: "02:00" },
 ];
 
 export const OFFICES: { id: OfficeId; label: string; kind: "hall" | "kiosk" }[] = [
@@ -63,10 +71,26 @@ export function shiftOf(id: ShiftId) {
   return SHIFTS.find((shift) => shift.id === id) ?? SHIFTS[0];
 }
 
+const DAY_MINUTES = 24 * 60;
+
+/** Duty ranges in minutes. An overnight shift is split at midnight. End is exclusive. */
+export function dutyRanges(shiftId: ShiftId): [number, number][] {
+  const shift = shiftOf(shiftId);
+  const start = timeToMinutes(shift.start);
+  const end = timeToMinutes(shift.end);
+  if (end > start) return [[start, end]];
+  if (end < start) return [[start, DAY_MINUTES], [0, end]];
+  return [];
+}
+
+function rangesOverlap(left: [number, number], right: [number, number]) {
+  return left[0] < right[1] && right[0] < left[1];
+}
+
 export function shiftsOverlap(left: ShiftId, right: ShiftId) {
-  const a = shiftOf(left);
-  const b = shiftOf(right);
-  return timeToMinutes(a.start) < timeToMinutes(b.end) && timeToMinutes(b.start) < timeToMinutes(a.end);
+  const a = dutyRanges(left);
+  const b = dutyRanges(right);
+  return a.some((one) => b.some((other) => rangesOverlap(one, other)));
 }
 
 /** Shifts whose duty window overlaps this shift, including itself. */
@@ -74,10 +98,14 @@ export function shiftsOverlapping(shiftId: ShiftId): ShiftId[] {
   return SHIFTS.map((shift) => shift.id).filter((id) => shiftsOverlap(shiftId, id));
 }
 
-/** Shifts still on duty at this clock time. End is exclusive, so 13:15 drops B2. */
-export function shiftsActiveAt(now: string): ShiftId[] {
+export function shiftCovers(shiftId: ShiftId, now: string) {
   const minute = timeToMinutes(now);
-  return SHIFTS.filter((shift) => minute >= timeToMinutes(shift.start) && minute < timeToMinutes(shift.end)).map((shift) => shift.id);
+  return dutyRanges(shiftId).some(([start, end]) => minute >= start && minute < end);
+}
+
+/** Shifts still on duty at this clock time. End is exclusive, so 13:10 drops B2 and 06:45 drops A. */
+export function shiftsActiveAt(now: string): ShiftId[] {
+  return SHIFTS.filter((shift) => shiftCovers(shift.id, now)).map((shift) => shift.id);
 }
 
 export function overlapRowId(shiftId: ShiftId, rowId: string) {
@@ -207,34 +235,70 @@ export function extremeNotes(rules: RuleSettings, shiftId: ShiftId) {
 
 export function slotStarts(shiftId: ShiftId) {
   const shift = shiftOf(shiftId);
+  const start = timeToMinutes(shift.start);
   const end = timeToMinutes(shift.end);
-  if (shiftId === "A") {
-    const slots: string[] = [];
-    // :00/:30 grid. A slot may start before 06:45; coverage stops at duty end (slotCoverEnd).
-    for (let minute = 0; minute < end; minute += SLOT_MINUTES) slots.push(formatMinute(minute));
+  const slots: string[] = [];
+  if (end > start) {
+    for (let minute = start; minute < end; minute += SLOT_MINUTES) slots.push(formatMinute(minute));
     return slots;
   }
-  const slots: string[] = [];
-  for (let minute = timeToMinutes(shift.start); minute + SLOT_MINUTES <= end; minute += SLOT_MINUTES) {
-    slots.push(formatMinute(minute));
-  }
+  if (end === start) return slots;
+  for (let minute = start; minute < DAY_MINUTES; minute += SLOT_MINUTES) slots.push(formatMinute(minute));
+  const last = timeToMinutes(slots[slots.length - 1] ?? shift.start);
+  const spilled = last + SLOT_MINUTES - DAY_MINUTES;
+  for (let minute = spilled > 0 ? spilled : 0; minute < end; minute += SLOT_MINUTES) slots.push(formatMinute(minute));
   return slots;
 }
 
-/** Coverage of a slot stops at the shift's duty end. A's 06:30 cell ends at 06:45, when B2/B1 take the posts. */
-function slotCoverEnd(shiftId: ShiftId, startMinute: number) {
-  return Math.min(startMinute + SLOT_MINUTES, timeToMinutes(shiftOf(shiftId).end));
+/** Inclusive start, exclusive end. End may pass midnight as a value above 24:00. The last slot stops at duty end, so A releases posts at 06:45. */
+function slotRangeOf(shiftId: ShiftId, slots: string[], index: number): [number, number] | null {
+  const slot = slots[index];
+  if (!slot) return null;
+  const start = timeToMinutes(slot);
+  const next = slots[index + 1];
+  if (next) {
+    const nextMin = timeToMinutes(next);
+    return [start, nextMin > start ? nextMin : nextMin + DAY_MINUTES];
+  }
+  const shift = shiftOf(shiftId);
+  const shiftStart = timeToMinutes(shift.start);
+  const shiftEnd = timeToMinutes(shift.end);
+  if (shiftEnd > shiftStart) return [start, shiftEnd];
+  if (start >= shiftStart) return [start, shiftEnd + DAY_MINUTES];
+  return [start, shiftEnd];
 }
 
-export function slotIndexAt(slots: string[], now: string, dutyEnd?: string) {
+function minuteInRange(minute: number, range: [number, number]) {
+  const [start, end] = range;
+  if (end <= DAY_MINUTES) return minute >= start && minute < end;
+  return minute >= start || minute < end - DAY_MINUTES;
+}
+
+function slotDuration(shiftId: ShiftId, slot: string) {
+  const slots = slotStarts(shiftId);
+  const index = slots.indexOf(slot);
+  const range = index < 0 ? null : slotRangeOf(shiftId, slots, index);
+  if (!range) return SLOT_MINUTES;
+  return range[1] - range[0];
+}
+
+export function slotIndexAt(slots: string[], now: string, shiftId?: ShiftId) {
   const current = timeToMinutes(now);
-  const cap = dutyEnd ? timeToMinutes(dutyEnd) : Number.POSITIVE_INFINITY;
   for (let index = 0; index < slots.length; index += 1) {
-    const start = timeToMinutes(slots[index] ?? "00:00");
-    const end = Math.min(start + SLOT_MINUTES, cap);
-    if (current >= start && current < end) return index;
+    const range = shiftId ? slotRangeOf(shiftId, slots, index) : fallbackSlotRange(slots, index);
+    if (range && minuteInRange(current, range)) return index;
   }
   return -1;
+}
+
+function fallbackSlotRange(slots: string[], index: number): [number, number] | null {
+  const slot = slots[index];
+  if (!slot) return null;
+  const start = timeToMinutes(slot);
+  const next = slots[index + 1];
+  if (!next) return [start, start + SLOT_MINUTES];
+  const nextMin = timeToMinutes(next);
+  return [start, nextMin > start ? nextMin : nextMin + DAY_MINUTES];
 }
 
 export function bookKey(officeId: OfficeId, shiftId: ShiftId, counters: number, apc: number, kiosks: number) {
@@ -554,7 +618,7 @@ export function shortageAdvice(staffing: StaffingState, now: string) {
   const offClock = offClockWarning(now, staffing.shiftId);
   if (offClock) return { missing: [] as string[], text: offClock };
   const slots = slotStarts(staffing.shiftId);
-  const index = slotIndexAt(slots, now);
+  const index = slotIndexAt(slots, now, staffing.shiftId);
   if (index < 0) return { missing: [] as string[], text: "這一更未開始，未有在崗缺口。" };
   const open = codesAt(staffing, staffing.officeId, slots[index] ?? now);
   const taken = new Set<string>();
@@ -696,7 +760,7 @@ function allowsCode(allows: PostKind[], code: string) {
 
 export function codesAt(staffing: StaffingState, officeId: OfficeId, when: string) {
   const slots = slotStarts(staffing.shiftId);
-  const index = slotIndexAt(slots, when);
+  const index = slotIndexAt(slots, when, staffing.shiftId);
   const closed = new Set<string>();
   for (const closure of staffing.closures ?? []) {
     if (closure.officeId !== officeId || closure.shiftId !== staffing.shiftId) continue;
@@ -884,10 +948,10 @@ export function projectBoard(state: BoardState): BoardState {
   for (const shiftId of ordered) {
     const shift = shiftOf(shiftId);
     const slots = slotStarts(shiftId);
-    const index = slotIndexAt(slots, state.now, shift.end);
+    const index = slotIndexAt(slots, state.now, shiftId);
     if (index < 0) continue;
     const slotStart = slots[index] ?? shift.start;
-    const slotEnd = formatMinute(slotCoverEnd(shiftId, timeToMinutes(slotStart)));
+    const slotEnd = formatMinute(timeToMinutes(slotStart) + slotDuration(shiftId, slotStart));
     const selected = shiftId === staffing.shiftId;
     (plans.get(shiftId) ?? []).forEach((row, order) => {
       const cell = row.cells[index] ?? "";
@@ -935,7 +999,7 @@ export function absorbShown(base: BoardState, shown: BoardState): BoardState {
   }
   const staffing = base.staffing;
   const slots = slotStarts(staffing.shiftId);
-  const index = slotIndexAt(slots, base.now);
+  const index = slotIndexAt(slots, base.now, staffing.shiftId);
   if (index < 0) return { ...base, date: shown.date, now: shown.now };
   const rows = activeRows(staffing).map((row) => ({ ...row, cells: row.cells.slice() }));
   const loans = staffing.loans.map((loan) => ({ ...loan, cells: loan.cells.slice() }));
@@ -978,18 +1042,20 @@ export type OverlapRoster = {
 /** Anchor shift plus every shift whose window overlaps it, aligned on one timeline. */
 export function combinedRoster(staffing: StaffingState, _source: "stored" | "preview" = "stored"): OverlapRoster {
   const shifts = shiftsOverlapping(staffing.shiftId);
-  const anchorStart = timeToMinutes(shiftOf(staffing.shiftId).start);
-  const latestEnd = Math.max(...shifts.map((id) => timeToMinutes(shiftOf(id).end)));
+  const anchor = shiftOf(staffing.shiftId);
+  const anchorStart = timeToMinutes(anchor.start);
+  const overnight = timeToMinutes(anchor.end) < anchorStart;
+  const latestOrder = Math.max(...shifts.map((id) => shiftEndOrder(id, anchorStart, overnight)));
   const slotSet = new Set<string>();
   for (const id of shifts) {
     for (const slot of slotStarts(id)) {
-      const minute = timeToMinutes(slot);
-      if (minute + SLOT_MINUTES <= anchorStart) continue;
-      if (minute >= latestEnd) continue;
+      const startOrder = slotOrder(timeToMinutes(slot), anchorStart, overnight);
+      if (startOrder + SLOT_MINUTES <= anchorStart) continue;
+      if (startOrder >= latestOrder) continue;
       slotSet.add(slot);
     }
   }
-  const slots = [...slotSet].sort((left, right) => timeToMinutes(left) - timeToMinutes(right));
+  const slots = [...slotSet].sort((left, right) => slotOrder(timeToMinutes(left), anchorStart, overnight) - slotOrder(timeToMinutes(right), anchorStart, overnight));
   const rows: RosterRow[] = [];
   const plans = officePlans(staffing);
   for (const shiftId of shifts) {
@@ -1015,6 +1081,18 @@ export function combinedRoster(staffing: StaffingState, _source: "stored" | "pre
 
 export function previewRows(staffing: StaffingState) {
   return combinedRoster(staffing, "preview").rows;
+}
+
+/** One person's shift, with every slot of that duty — not clipped to the focused overlap. */
+export function shiftBoard(staffing: StaffingState, shiftId: ShiftId): { slots: string[]; rows: RosterRow[] } {
+  const slots = slotStarts(shiftId);
+  const rows = (officePlans(staffing).get(shiftId) ?? []).map((row) => ({
+    ...row,
+    allows: row.allows.slice(),
+    cells: row.cells.slice(),
+    code: row.code.startsWith(`${shiftId} `) ? row.code : `${shiftId} ${row.code}`,
+  }));
+  return { slots, rows };
 }
 
 export function previewFilename(staffing: StaffingState) {
@@ -1326,10 +1404,10 @@ function memoSlots(shiftId: ShiftId) {
   return slots;
 }
 
-function slotIndexCovering(slots: string[], minute: number, dutyEnd: number) {
+function slotIndexCovering(slots: string[], minute: number, shiftId?: ShiftId) {
   for (let index = 0; index < slots.length; index += 1) {
-    const start = timeToMinutes(slots[index] ?? "");
-    if (minute >= start && minute < Math.min(start + SLOT_MINUTES, dutyEnd)) return index;
+    const range = shiftId ? slotRangeOf(shiftId, slots, index) : fallbackSlotRange(slots, index);
+    if (range && minuteInRange(minute, range)) return index;
   }
   return -1;
 }
@@ -1352,10 +1430,7 @@ function sharedCrewSizes(postCount: number, rulesFor: (shiftId: ShiftId) => Rule
     slotsByShift.set(shift.id, slots);
     for (const slot of slots) samples.add(timeToMinutes(slot));
   }
-  const covers = (shiftId: ShiftId, minute: number) => {
-    const dutyEnd = timeToMinutes(shiftOf(shiftId).end);
-    return slotIndexCovering(slotsByShift.get(shiftId) ?? [], minute, dutyEnd) >= 0;
-  };
+  const covers = (shiftId: ShiftId, minute: number) => slotIndexCovering(slotsByShift.get(shiftId) ?? [], minute, shiftId) >= 0;
   const supply = (minute: number) => {
     let total = 0;
     for (const shift of SHIFTS) {
@@ -1436,7 +1511,7 @@ function trialWorkers(staffing: StaffingState, plans: Map<ShiftId, string[][]>) 
 function filledPosts(workers: SharedWorker[], minute: number) {
   const busy = new Set<string>();
   for (const worker of workers) {
-    const index = slotIndexCovering(worker.slots, minute, timeToMinutes(shiftOf(worker.shiftId).end));
+    const index = slotIndexCovering(worker.slots, minute, worker.shiftId);
     if (index < 0) continue;
     const cell = worker.cells[index] ?? "";
     if (!cell || isRestCode(cell)) continue;
@@ -1775,10 +1850,8 @@ function assignShared(workers: SharedWorker[], posts: string[]) {
   const order = SHIFTS.map((shift) => shift.id);
   for (const slot of times) {
     const start = timeToMinutes(slot);
-    const holders = workers.filter((worker) => worker.slots.includes(slot));
-    if (!holders.length) continue;
-    const end = Math.min(...holders.map((worker) => slotCoverEnd(worker.shiftId, start)));
-    if (end <= start) continue;
+    const endFor = (shiftId: ShiftId) => start + slotDuration(shiftId, slot);
+    const end = start + SLOT_MINUTES;
     const taken = postsBusy(seats, start, end);
     const holding = new Map<ShiftId, number>();
     const needing: { worker: SharedWorker; index: number }[] = [];
@@ -1798,7 +1871,7 @@ function assignShared(workers: SharedWorker[], posts: string[]) {
       const worker = job.worker;
       const allowed = postsForWorker(worker, posts);
       if (!worker.rules.stickyPost || !worker.current || taken.has(worker.current) || !allowed.includes(worker.current)) continue;
-      giveShared(worker, job.index, worker.current, taken, seats, start, end);
+      giveShared(worker, job.index, worker.current, taken, seats, start, endFor(worker.shiftId));
       holding.set(worker.shiftId, (holding.get(worker.shiftId) ?? 0) + 1);
     }
     const queues = new Map<ShiftId, { worker: SharedWorker; index: number }[]>();
@@ -1840,7 +1913,7 @@ function assignShared(workers: SharedWorker[], posts: string[]) {
         worker.afterRest = worker.previous !== "";
         continue;
       }
-      giveShared(worker, job.index, code, taken, seats, start, end);
+      giveShared(worker, job.index, code, taken, seats, start, endFor(worker.shiftId));
       holding.set(worker.shiftId, (holding.get(worker.shiftId) ?? 0) + 1);
     }
   }
@@ -1953,12 +2026,36 @@ function fillLoanCells(slots: string[], window: number[], destRows: RosterRow[],
 function slotWindow(slots: string[], start: string, end: string) {
   const from = timeToMinutes(start);
   const to = timeToMinutes(end);
+  const spans: [number, number][] = to > from ? [[from, to]] : [[from, DAY_MINUTES], [0, to]];
   const indexes: number[] = [];
   slots.forEach((slot, index) => {
-    const minute = timeToMinutes(slot);
-    if (minute + SLOT_MINUTES > from && minute < to) indexes.push(index);
+    const begin = timeToMinutes(slot);
+    const next = slots[index + 1];
+    let finish = begin + SLOT_MINUTES;
+    if (next) {
+      const nextMin = timeToMinutes(next);
+      finish = nextMin > begin ? nextMin : nextMin + DAY_MINUTES;
+    }
+    const pieces: [number, number][] = finish <= DAY_MINUTES ? [[begin, finish]] : [[begin, DAY_MINUTES], [0, finish - DAY_MINUTES]];
+    if (pieces.some((piece) => spans.some((span) => rangesOverlap(piece, span)))) indexes.push(index);
   });
   return indexes;
+}
+
+/** Morning hours of an overnight anchor sort after the evening, not before it. */
+function slotOrder(minute: number, anchorStart: number, overnight: boolean) {
+  if (!overnight) return minute;
+  if (minute >= anchorStart) return minute;
+  if (minute < 12 * 60) return minute + DAY_MINUTES;
+  return minute;
+}
+
+function shiftEndOrder(shiftId: ShiftId, anchorStart: number, overnight: boolean) {
+  const shift = shiftOf(shiftId);
+  const start = timeToMinutes(shift.start);
+  const end = timeToMinutes(shift.end);
+  if (end < start) return end + DAY_MINUTES;
+  return slotOrder(end, anchorStart, overnight);
 }
 
 function personFromRow(row: RosterRow, order: number, shift: ShiftDef, shiftId: ShiftId): Staff {
