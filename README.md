@@ -43,6 +43,14 @@ npm run dev
 
 電腦開 <http://127.0.0.1:4317>，撳 **產生 QR**。
 
+`npm run dev` 開住之後，另一個終端機可以一次過影 Mark 清單嘅六張圖（要本機有 Chrome；路徑唔同就設 `CHROME_PATH`）：
+
+```bash
+npm run shots:qr
+```
+
+檔案喺 `shots/`：`qr-gen-staff.png`、`qr-gen-supervisor.png`、`qr-staff-day.png`、`qr-staff-print.png`、`qr-supervisor-day.png`、`qr-bad-link.png`。
+
 - 員工（掃完即係呢個人全日崗位，可列印，冇主導航）：`/?view=person&staff=K4&shift=B2&date=2026-09-28&loc=arr-hall`
 - 主管（該日該區全日只讀總覽）：`/?view=supervisor&date=2026-09-28&loc=arr-hall`
 - 壞 link 會出錯誤，例如 `/?view=person` 或 `/?view=supervisor&date=2026-09-28&loc=roof`

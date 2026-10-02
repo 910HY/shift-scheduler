@@ -10,6 +10,7 @@
     "build": "tsc -b && vite build",
     "start": "sh scripts/start-prod.sh",
     "lint": "oxlint",
+    "shots:qr": "node scripts/shots-qr.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4317"
   },
   "dependencies": {
@@ -35,6 +36,7 @@
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
+    "puppeteer-core": "^24.43.1",
     "typescript": "~6.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.2"
