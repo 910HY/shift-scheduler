@@ -98,6 +98,8 @@ export function ensureStaffing(state: BoardState): BoardState {
         ...state,
         staffing: {
           ...state.staffing,
+          kioskApc: state.staffing.kioskApc ?? 0,
+          kioskApcMax: state.staffing.kioskApcMax ?? 0,
           closures: state.staffing.closures ?? [],
           loans: state.staffing.loans ?? [],
         },

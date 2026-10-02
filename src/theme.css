@@ -686,7 +686,7 @@ select {
 }
 
 .ops-metrics.is-kiosk {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .ops-metric {
@@ -1282,7 +1282,7 @@ select {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .ops-metrics.is-kiosk {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .ops-metric {
     padding: 10px;
