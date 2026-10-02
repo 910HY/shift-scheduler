@@ -66,7 +66,6 @@ describe("capacity and crew", () => {
   it("derives APC posts from gates divided by six and the full site", () => {
     expect(apcPosts(60, 6)).toBe(10);
     expect(hallMax(30, 60, 6)).toBe(40);
-    expect(siteCapacity(30, 60, 6, 12)).toBe(104);
     expect(siteCapacity(30, 60, 6, 4, 2)).toBe(92);
     expect(scaleCount(12, 30)).toBe(4);
     expect(scaleCount(30, 50)).toBe(15);
@@ -159,6 +158,33 @@ describe("office focus", () => {
       expect(focus?.filled).toBe(6);
     }
     expect(openPostCodes("arr-hall", demo.staffing!)).toHaveLength(40);
+    expect(demo.staffing?.counters).toBe(30);
+    expect(demo.staffing?.apc).toBe(10);
+    expect(crewFor({ ...demo.staffing!, officeId: "arr-kiosk" }, "arr-kiosk")).toBe(requiredCrew(6, 6.5, 1.5));
+    expect(crewFor({ ...demo.staffing!, officeId: "dep-kiosk" }, "dep-kiosk")).toBe(requiredCrew(6, 6.5, 1.5));
+    expect(crewFor(demo.staffing!, "arr-hall")).toBe(requiredCrew(40, 6.5, 1.5));
+  });
+
+  it("hides retired A5–A12 and keeps a saved 12-booth board on the new cap", () => {
+    const over = { ...createDefaultStaffing(), officeId: "arr-kiosk" as const, kiosks: 12, kioskApc: 9 };
+    expect(openPostCodes("arr-kiosk", over)).toEqual(["A1", "A2", "A3", "A4", "Apc 1", "Apc 2"]);
+    expect(openPostCodes("dep-kiosk", over).join(" ")).not.toMatch(/A(?:[5-9]|1[0-2])/);
+    const typed = setOpenCounts(setOffice(board(), "dep-kiosk"), { kiosks: 12, kioskApc: 8 }).staffing!;
+    expect(typed.kiosks).toBe(4);
+    expect(typed.kioskApc).toBe(2);
+    expect(crewFor(typed, "dep-kiosk")).toBe(8);
+    const legacy = ensureStaffing({
+      ...createAppSeed(),
+      staffing: { ...createDefaultStaffing(), kiosks: 12, kioskMax: 12, kioskApc: 0, kioskApcMax: 0, percent: 100, books: { legacy: [] } },
+    });
+    expect(legacy.staffing?.kioskMax).toBe(4);
+    expect(legacy.staffing?.kioskApcMax).toBe(2);
+    expect(legacy.staffing?.kiosks).toBe(4);
+    expect(legacy.staffing?.kioskApc).toBe(2);
+    expect(openPostCodes("arr-kiosk", legacy.staffing!)).toEqual(["A1", "A2", "A3", "A4", "Apc 1", "Apc 2"]);
+    const half = setPercent(setOffice(board(), "arr-kiosk"), 50).staffing!;
+    expect(openPostCodes("arr-kiosk", half)).toEqual(["A1", "A2", "Apc 1"]);
+    expect(crewFor(half, "arr-kiosk")).toBe(requiredCrew(3, 6.5, 1.5));
   });
 });
 
@@ -977,20 +1003,22 @@ describe("temporary posts", () => {
     expect(values.has("Apc 1")).toBe(true);
   });
 
-  it("adds kiosk posts only on a kiosk office", () => {
+  it("adds kiosk posts only on a kiosk office, and stops at A4 plus 2 APC", () => {
     const hall = addOpenPosts(board(), "kiosk", 2);
     expect(hall.staffing?.kiosks).toBe(createDefaultStaffing().kiosks);
     const kiosk = {
       ...board(),
-      staffing: { ...createDefaultStaffing(), officeId: "arr-kiosk" as const, kiosks: 4, books: {}, percent: null },
+      staffing: { ...createDefaultStaffing(), officeId: "arr-kiosk" as const, kiosks: 2, kioskApc: 1, books: {}, percent: null },
     };
     const added = addOpenPosts(kiosk, "kiosk", 2);
-    expect(added.staffing?.kiosks).toBe(6);
-    expect(added.staffing?.kioskApc).toBe(2);
-    expect(openPostCodes("arr-kiosk", added.staffing!)).toEqual(["A1", "A2", "A3", "A4", "A5", "A6", "Apc 1", "Apc 2"]);
-    const withApc = addOpenPosts(added, "apc", 1);
-    expect(withApc.staffing?.kioskApc).toBe(3);
-    expect(withApc.staffing?.apc).toBe(added.staffing?.apc);
+    expect(added.staffing?.kiosks).toBe(4);
+    expect(openPostCodes("arr-kiosk", added.staffing!)).toEqual(["A1", "A2", "A3", "A4", "Apc 1"]);
+    const capped = addOpenPosts(added, "kiosk", 2);
+    expect(capped.staffing?.kiosks).toBe(4);
+    const withApc = addOpenPosts(addOpenPosts(capped, "apc", 1), "apc", 1);
+    expect(withApc.staffing?.kioskApc).toBe(2);
+    expect(withApc.staffing?.apc).toBe(capped.staffing?.apc);
+    expect(openPostCodes("arr-kiosk", withApc.staffing!).join(" ")).not.toMatch(/A(?:[5-9]|1[0-2])/);
     expect(crewFor(added.staffing!)).toBeGreaterThan(crewFor(kiosk.staffing!));
     expect(addOpenPosts(added, "counter", 1).staffing?.counters).toBe(added.staffing?.counters);
   });

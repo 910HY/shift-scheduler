@@ -7,6 +7,8 @@ import { nowPlace, presenceTotals } from "@/logic/presence";
 import {
   EARLY_CELL,
   FOCUS_BANDS,
+  KIOSK_APC,
+  KIOSK_POSTS,
   OFFICES,
   PERCENT_SHORTCUTS,
   SHIFTS,
@@ -54,6 +56,7 @@ import {
   shortageAdvice,
   siteCapacity,
   siteOverview,
+  visibleKioskCounts,
   slotIndexAt,
   slotStarts,
 } from "@/logic/staffing";
@@ -423,8 +426,9 @@ export function StaffingScreen() {
                   data-testid="open-kiosks"
                   type="number"
                   min={0}
+                  max={KIOSK_POSTS}
                   inputMode="numeric"
-                  value={staffing.kiosks}
+                  value={visibleKioskCounts(staffing).posts}
                   onChange={(event) => {
                     board.replace(setOpenCounts(state, { kiosks: numberOrZero(event.target.value) }));
                     setDraft(null);
@@ -438,8 +442,9 @@ export function StaffingScreen() {
                   data-testid="open-kiosk-apc"
                   type="number"
                   min={0}
+                  max={KIOSK_APC}
                   inputMode="numeric"
-                  value={staffing.kioskApc}
+                  value={visibleKioskCounts(staffing).apc}
                   onChange={(event) => {
                     board.replace(setOpenCounts(state, { kioskApc: numberOrZero(event.target.value) }));
                     setDraft(null);
@@ -1001,8 +1006,8 @@ function SettingsPanel({
         </>
       ) : (
         <>
-          <label className="num-row">崗<input aria-label="崗數" type="number" min={0} value={staffing.kiosks} onChange={(event) => onCounts({ kiosks: Number(event.target.value) })} /></label>
-          <label className="num-row">APC<input aria-label="Kiosk APC 崗數" type="number" min={0} value={staffing.kioskApc} onChange={(event) => onCounts({ kioskApc: Number(event.target.value) })} /></label>
+          <label className="num-row">崗<input aria-label="崗數" type="number" min={0} max={KIOSK_POSTS} value={visibleKioskCounts(staffing).posts} onChange={(event) => onCounts({ kiosks: Number(event.target.value) })} /></label>
+          <label className="num-row">APC<input aria-label="Kiosk APC 崗數" type="number" min={0} max={KIOSK_APC} value={visibleKioskCounts(staffing).apc} onChange={(event) => onCounts({ kioskApc: Number(event.target.value) })} /></label>
         </>
       )}
       <h2>喜好</h2>
@@ -1045,8 +1050,8 @@ function OpenTotals({ staffing, compact = false }: { staffing: StaffingState; co
         { key: "apc", label: "APC", value: staffing.apc },
       ]
     : [
-        { key: "kiosk", label: "崗", value: staffing.kiosks },
-        { key: "apc", label: "APC", value: staffing.kioskApc },
+        { key: "kiosk", label: "崗", value: visibleKioskCounts(staffing).posts },
+        { key: "apc", label: "APC", value: visibleKioskCounts(staffing).apc },
       ];
   const summary = parts.map((part) => `${part.value} ${part.label}`).join(" · ");
   const pctNote = staffing.percent != null ? `${staffing.percent}%` : "自訂";

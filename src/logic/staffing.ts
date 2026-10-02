@@ -1,5 +1,4 @@
 import hallCsv from "@/logic/fixtures/b2-arr-hall.csv?raw";
-import kioskCsv from "@/logic/fixtures/b2-arr-kiosk.csv?raw";
 import overnightCsv from "@/logic/fixtures/a-arr-kiosk.csv?raw";
 import { presenceTotals } from "@/logic/presence";
 import { isWithinDuty, timeToMinutes } from "@/logic/time";
@@ -53,9 +52,14 @@ export const OFFICES: { id: OfficeId; label: string; kind: "hall" | "kiosk" }[] 
   { id: "dep-kiosk", label: "Dep Kiosk", kind: "kiosk" },
 ];
 
-/** Arr Kiosk and Dep Kiosk each open at 4 posts plus 2 APC. Hall stays 30 counters plus 10 APC. */
+/** Arr Kiosk and Dep Kiosk each open at 4 posts plus 2 APC. A5–A12 are retired. Hall stays 30 counters plus 10 APC. */
 export const KIOSK_POSTS = 4;
 export const KIOSK_APC = 2;
+
+function boundedCount(value: number | undefined, max: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(max, Math.max(0, Math.trunc(value as number)));
+}
 
 export const PERCENT_SHORTCUTS = [30, 50, 75, 100] as const;
 
@@ -317,6 +321,14 @@ function staffingBookKey(staffing: OpenCounts, officeId: OfficeId, shiftId: Shif
   return bookKey(officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks, staffing.kioskApc ?? 0);
 }
 
+/** Kiosk offices never list retired booths A5–A12. The full-open set is A1–A4 plus two APC. */
+export function visibleKioskCounts(staffing: OpenCounts) {
+  return {
+    posts: boundedCount(staffing.kiosks, KIOSK_POSTS),
+    apc: boundedCount(staffing.kioskApc, KIOSK_APC),
+  };
+}
+
 export function openPostCodes(officeId: OfficeId, staffing: OpenCounts) {
   const office = officeOf(officeId);
   if (office.kind === "hall") {
@@ -325,9 +337,10 @@ export function openPostCodes(officeId: OfficeId, staffing: OpenCounts) {
       ...numbers(staffing.apc).map((index) => `Apc ${index}`),
     ];
   }
+  const visible = visibleKioskCounts(staffing);
   return [
-    ...numbers(staffing.kiosks).map((index) => `A${index}`),
-    ...numbers(staffing.kioskApc ?? 0).map((index) => `Apc ${index}`),
+    ...numbers(visible.posts).map((index) => `A${index}`),
+    ...numbers(visible.apc).map((index) => `Apc ${index}`),
   ];
 }
 
@@ -415,12 +428,9 @@ export function createDefaultStaffing(): StaffingState {
     closures: [],
   };
   const hall = parseRosterCsv(hallCsv, "arr-hall");
-  const kiosk = parseRosterCsv(kioskCsv, "arr-kiosk");
   const overnight = parseRosterCsv(overnightCsv, "arr-kiosk");
   staffing.books[bookKey("arr-hall", "B2", 30, 10, 12)] = hall.rows;
   staffing.books[bookKey("dep-hall", "B2", 30, 10, 12)] = cloneRows(hall.rows, "dep-hall");
-  staffing.books[bookKey("arr-kiosk", "B2", 30, 10, 12, 0)] = kiosk.rows;
-  staffing.books[bookKey("dep-kiosk", "B2", 30, 10, 12, 0)] = cloneRows(kiosk.rows, "dep-kiosk");
   staffing.books[bookKey("arr-kiosk", "A", 9, 3, 4, 0)] = overnight.rows;
   return staffing;
 }
@@ -479,7 +489,10 @@ export function setPercent(state: BoardState, percent: number): BoardState {
 
 export function setOpenCounts(state: BoardState, patch: Partial<Pick<StaffingState, "counters" | "apc" | "kiosks" | "kioskApc" | "gates" | "gatesPerPost">>): BoardState {
   if (!state.staffing) return state;
-  return { ...state, staffing: { ...state.staffing, ...patch, percent: null } };
+  const next = { ...patch };
+  if (next.kiosks != null) next.kiosks = boundedCount(next.kiosks, state.staffing.kioskMax);
+  if (next.kioskApc != null) next.kioskApc = boundedCount(next.kioskApc, state.staffing.kioskApcMax ?? KIOSK_APC);
+  return { ...state, staffing: { ...state.staffing, ...next, percent: null } };
 }
 
 /** Temporary open posts on top of the current counts. A percent shortcut still returns to the baseline. */
@@ -494,9 +507,9 @@ export function addOpenPosts(state: BoardState, kind: PostKind, count = 1): Boar
   if (kind === "counter") return setOpenCounts(state, { counters: Math.min(cap, staffing.counters + step) });
   if (kind === "apc") {
     if (hall) return setOpenCounts(state, { apc: Math.min(cap, staffing.apc + step) });
-    return setOpenCounts(state, { kioskApc: Math.min(cap, (staffing.kioskApc ?? 0) + step) });
+    return setOpenCounts(state, { kioskApc: (staffing.kioskApc ?? 0) + step });
   }
-  return setOpenCounts(state, { kiosks: Math.min(cap, staffing.kiosks + step) });
+  return setOpenCounts(state, { kiosks: staffing.kiosks + step });
 }
 
 export function setRules(state: BoardState, rules: RuleSettings): BoardState {
