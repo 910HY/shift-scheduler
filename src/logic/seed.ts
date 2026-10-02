@@ -1,5 +1,5 @@
-import { createDefaultStaffing, FOCUS_BANDS, shiftOf, shiftsActiveAt } from "@/logic/staffing";
-import type { BoardState, Staff } from "@/types";
+import { createDefaultStaffing, FOCUS_BANDS, KIOSK_APC, KIOSK_POSTS, scaleCount, shiftOf, shiftsActiveAt } from "@/logic/staffing";
+import type { BoardState, Staff, StaffingState } from "@/types";
 
 function person(
   id: string,
@@ -92,16 +92,25 @@ export function alignNowToSelectedShift(state: BoardState): BoardState {
   return { ...state, now: prepare };
 }
 
+/** Old boards stored Kiosk full-open as 12 booths and no APC. That establishment is retired. */
+function migrateRetiredKiosk(staffing: StaffingState): StaffingState {
+  const base: StaffingState = {
+    ...staffing,
+    kioskApc: staffing.kioskApc ?? 0,
+    kioskApcMax: staffing.kioskApcMax ?? 0,
+    closures: staffing.closures ?? [],
+    loans: staffing.loans ?? [],
+  };
+  if (base.kioskMax !== 12) return base;
+  const ratio = base.kiosks / 12;
+  const kiosks = base.percent != null ? scaleCount(KIOSK_POSTS, base.percent) : Math.min(KIOSK_POSTS, Math.max(0, Math.round(KIOSK_POSTS * ratio)));
+  const kioskApc = base.percent != null ? scaleCount(KIOSK_APC, base.percent) : Math.min(KIOSK_APC, Math.max(0, Math.round(KIOSK_APC * ratio)));
+  return { ...base, kioskMax: KIOSK_POSTS, kioskApcMax: KIOSK_APC, kiosks, kioskApc };
+}
+
 export function ensureStaffing(state: BoardState): BoardState {
   const next: BoardState = state.staffing?.books
-    ? {
-        ...state,
-        staffing: {
-          ...state.staffing,
-          closures: state.staffing.closures ?? [],
-          loans: state.staffing.loans ?? [],
-        },
-      }
+    ? { ...state, staffing: migrateRetiredKiosk(state.staffing) }
     : { ...state, shiftName: "B2", staffing: createDefaultStaffing() };
   return alignNowToSelectedShift(next);
 }

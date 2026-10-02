@@ -4,7 +4,7 @@
 
 呢個 repo 之前係「即日編更」手機 MVP（Flask + 靜態時間軸）。而家 `/` 係渣板，舊檔留喺 `archive/shift-mobile-mvp/`，唔再係正式站。
 
-沒有登入、多人即時同步。Arr Hall、Dep Hall、Arr Kiosk、Dep Kiosk 各自編崗。Hall 開滿是櫃位 30 加 APC 10（60 閘 ÷ 6）。Kiosk 開滿 12。全場 104。
+沒有登入、多人即時同步。Arr Hall、Dep Hall、Arr Kiosk、Dep Kiosk 各自編崗。Hall 開滿是櫃位 30 加 APC 10（60 閘 ÷ 6）。Arr Kiosk、Dep Kiosk 開滿各是 4 崗（A1–A4）加 APC 2，合計 6。舊 12 亭（A5–A12）唔再係預設全開。全場 92。
 
 顏色集中在 `src/theme.css`。在崗 `#2F6B4F`、休息 `#C9872A`（深色字）、早走／遲返 `#B5473A`、空缺虛線 `#9AA3B2`、場地 `#F4F5F7`、選中框 `#3B6FD8`。崗位區淡罩 `#E8F0EC`，休息區淡罩 `#F8F0E4`。
 

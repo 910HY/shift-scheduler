@@ -1,5 +1,4 @@
 import hallCsv from "@/logic/fixtures/b2-arr-hall.csv?raw";
-import kioskCsv from "@/logic/fixtures/b2-arr-kiosk.csv?raw";
 import overnightCsv from "@/logic/fixtures/a-arr-kiosk.csv?raw";
 import { presenceTotals } from "@/logic/presence";
 import { isWithinDuty, timeToMinutes } from "@/logic/time";
@@ -52,6 +51,15 @@ export const OFFICES: { id: OfficeId; label: string; kind: "hall" | "kiosk" }[] 
   { id: "arr-kiosk", label: "Arr Kiosk", kind: "kiosk" },
   { id: "dep-kiosk", label: "Dep Kiosk", kind: "kiosk" },
 ];
+
+/** Arr Kiosk and Dep Kiosk each open at 4 posts plus 2 APC. A5–A12 are retired. Hall stays 30 counters plus 10 APC. */
+export const KIOSK_POSTS = 4;
+export const KIOSK_APC = 2;
+
+function boundedCount(value: number | undefined, max: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(max, Math.max(0, Math.trunc(value as number)));
+}
 
 export const PERCENT_SHORTCUTS = [30, 50, 75, 100] as const;
 
@@ -153,8 +161,8 @@ export function hallMax(counterMax: number, gates: number, gatesPerPost: number)
   return counterMax + apcPosts(gates, gatesPerPost);
 }
 
-export function siteCapacity(counterMax: number, gates: number, gatesPerPost: number, kioskMax: number) {
-  return hallMax(counterMax, gates, gatesPerPost) * 2 + kioskMax * 2;
+export function siteCapacity(counterMax: number, gates: number, gatesPerPost: number, kioskMax: number, kioskApcMax = 0) {
+  return hallMax(counterMax, gates, gatesPerPost) * 2 + (kioskMax + kioskApcMax) * 2;
 }
 
 export function scaleCount(max: number, percent: number) {
@@ -301,12 +309,27 @@ function fallbackSlotRange(slots: string[], index: number): [number, number] | n
   return [start, nextMin > start ? nextMin : nextMin + DAY_MINUTES];
 }
 
-export function bookKey(officeId: OfficeId, shiftId: ShiftId, counters: number, apc: number, kiosks: number) {
+export function bookKey(officeId: OfficeId, shiftId: ShiftId, counters: number, apc: number, kiosks: number, kioskApc = 0) {
   const office = officeOf(officeId);
-  return office.kind === "hall" ? `${officeId}|${shiftId}|c${counters}|a${apc}` : `${officeId}|${shiftId}|k${kiosks}`;
+  if (office.kind === "hall") return `${officeId}|${shiftId}|c${counters}|a${apc}`;
+  return `${officeId}|${shiftId}|k${kiosks}|a${kioskApc}`;
 }
 
-export function openPostCodes(officeId: OfficeId, staffing: Pick<StaffingState, "counters" | "apc" | "kiosks">) {
+type OpenCounts = Pick<StaffingState, "counters" | "apc" | "kiosks"> & Partial<Pick<StaffingState, "kioskApc">>;
+
+function staffingBookKey(staffing: OpenCounts, officeId: OfficeId, shiftId: ShiftId) {
+  return bookKey(officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks, staffing.kioskApc ?? 0);
+}
+
+/** Kiosk offices never list retired booths A5–A12. The full-open set is A1–A4 plus two APC. */
+export function visibleKioskCounts(staffing: OpenCounts) {
+  return {
+    posts: boundedCount(staffing.kiosks, KIOSK_POSTS),
+    apc: boundedCount(staffing.kioskApc, KIOSK_APC),
+  };
+}
+
+export function openPostCodes(officeId: OfficeId, staffing: OpenCounts) {
   const office = officeOf(officeId);
   if (office.kind === "hall") {
     return [
@@ -314,7 +337,11 @@ export function openPostCodes(officeId: OfficeId, staffing: Pick<StaffingState, 
       ...numbers(staffing.apc).map((index) => `Apc ${index}`),
     ];
   }
-  return numbers(staffing.kiosks).map((index) => `A${index}`);
+  const visible = visibleKioskCounts(staffing);
+  return [
+    ...numbers(visible.posts).map((index) => `A${index}`),
+    ...numbers(visible.apc).map((index) => `Apc ${index}`),
+  ];
 }
 
 export function simultaneousPosts(officeId: OfficeId, staffing: StaffingState) {
@@ -387,11 +414,13 @@ export function createDefaultStaffing(): StaffingState {
     percent: 100,
     counters: 30,
     apc: 10,
-    kiosks: 12,
+    kiosks: KIOSK_POSTS,
+    kioskApc: KIOSK_APC,
     gates: 60,
     gatesPerPost: 6,
     counterMax: 30,
-    kioskMax: 12,
+    kioskMax: KIOSK_POSTS,
+    kioskApcMax: KIOSK_APC,
     rules,
     lockedCodes: ["1"],
     books: {},
@@ -399,23 +428,20 @@ export function createDefaultStaffing(): StaffingState {
     closures: [],
   };
   const hall = parseRosterCsv(hallCsv, "arr-hall");
-  const kiosk = parseRosterCsv(kioskCsv, "arr-kiosk");
   const overnight = parseRosterCsv(overnightCsv, "arr-kiosk");
   staffing.books[bookKey("arr-hall", "B2", 30, 10, 12)] = hall.rows;
   staffing.books[bookKey("dep-hall", "B2", 30, 10, 12)] = cloneRows(hall.rows, "dep-hall");
-  staffing.books[bookKey("arr-kiosk", "B2", 30, 10, 12)] = kiosk.rows;
-  staffing.books[bookKey("dep-kiosk", "B2", 30, 10, 12)] = cloneRows(kiosk.rows, "dep-kiosk");
-  staffing.books[bookKey("arr-kiosk", "A", 9, 3, 4)] = overnight.rows;
+  staffing.books[bookKey("arr-kiosk", "A", 9, 3, 4, 0)] = overnight.rows;
   return staffing;
 }
 
 export function rowsFor(staffing: StaffingState, officeId = staffing.officeId, shiftId = staffing.shiftId) {
-  const key = bookKey(officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+  const key = staffingBookKey(staffing, officeId, shiftId);
   return staffing.books[key] ?? generateRoster(officeId, shiftId, staffing);
 }
 
 export function withBook(staffing: StaffingState, officeId: OfficeId, shiftId: ShiftId, rows: RosterRow[]): StaffingState {
-  const key = bookKey(officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+  const key = staffingBookKey(staffing, officeId, shiftId);
   return { ...staffing, books: { ...staffing.books, [key]: rows } };
 }
 
@@ -457,12 +483,16 @@ export function setPercent(state: BoardState, percent: number): BoardState {
   const counters = scaleCount(staffing.counterMax, clamped);
   const apc = scaleCount(apcPosts(staffing.gates, staffing.gatesPerPost), clamped);
   const kiosks = scaleCount(staffing.kioskMax, clamped);
-  return { ...state, staffing: { ...staffing, percent: clamped, counters, apc, kiosks } };
+  const kioskApc = scaleCount(staffing.kioskApcMax ?? 0, clamped);
+  return { ...state, staffing: { ...staffing, percent: clamped, counters, apc, kiosks, kioskApc } };
 }
 
-export function setOpenCounts(state: BoardState, patch: Partial<Pick<StaffingState, "counters" | "apc" | "kiosks" | "gates" | "gatesPerPost">>): BoardState {
+export function setOpenCounts(state: BoardState, patch: Partial<Pick<StaffingState, "counters" | "apc" | "kiosks" | "kioskApc" | "gates" | "gatesPerPost">>): BoardState {
   if (!state.staffing) return state;
-  return { ...state, staffing: { ...state.staffing, ...patch, percent: null } };
+  const next = { ...patch };
+  if (next.kiosks != null) next.kiosks = boundedCount(next.kiosks, state.staffing.kioskMax);
+  if (next.kioskApc != null) next.kioskApc = boundedCount(next.kioskApc, state.staffing.kioskApcMax ?? KIOSK_APC);
+  return { ...state, staffing: { ...state.staffing, ...next, percent: null } };
 }
 
 /** Temporary open posts on top of the current counts. A percent shortcut still returns to the baseline. */
@@ -472,11 +502,14 @@ export function addOpenPosts(state: BoardState, kind: PostKind, count = 1): Boar
   const staffing = state.staffing;
   const hall = officeOf(staffing.officeId).kind === "hall";
   if (hall && kind === "kiosk") return state;
-  if (!hall && kind !== "kiosk") return state;
+  if (!hall && kind === "counter") return state;
   const cap = 99;
   if (kind === "counter") return setOpenCounts(state, { counters: Math.min(cap, staffing.counters + step) });
-  if (kind === "apc") return setOpenCounts(state, { apc: Math.min(cap, staffing.apc + step) });
-  return setOpenCounts(state, { kiosks: Math.min(cap, staffing.kiosks + step) });
+  if (kind === "apc") {
+    if (hall) return setOpenCounts(state, { apc: Math.min(cap, staffing.apc + step) });
+    return setOpenCounts(state, { kioskApc: (staffing.kioskApc ?? 0) + step });
+  }
+  return setOpenCounts(state, { kiosks: staffing.kiosks + step });
 }
 
 export function setRules(state: BoardState, rules: RuleSettings): BoardState {
@@ -526,7 +559,7 @@ export function createLoan(
   const staffing = state.staffing;
   const fromOffice = input.fromOffice ?? staffing.officeId;
   if (input.toOffice === fromOffice) return { ok: false, reason: "不能借給自己這個區。" };
-  const sourceKey = bookKey(fromOffice, staffing.shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+  const sourceKey = staffingBookKey(staffing, fromOffice, staffing.shiftId);
   const rows = staffing.books[sourceKey] ?? generateRoster(fromOffice, staffing.shiftId, staffing);
   const person = rows.find((row) => row.id === input.personId);
   if (!person) return { ok: false, reason: "找不到這個人。" };
@@ -539,7 +572,7 @@ export function createLoan(
   const sourceShadow = person.cells.slice();
   const marked = person.cells.slice();
   for (const index of window) marked[index] = loanMarker(input.toOffice);
-  const destKey = bookKey(input.toOffice, staffing.shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+  const destKey = staffingBookKey(staffing, input.toOffice, staffing.shiftId);
   const destRows = staffing.books[destKey] ?? generateRoster(input.toOffice, staffing.shiftId, staffing);
   const cells = fillLoanCells(slots, window, destRows, staffing.rules, person.allows, openPostCodes(input.toOffice, staffing));
   const loan: StaffLoan = {
@@ -570,7 +603,7 @@ export function revokeLoan(state: BoardState, loanId: string): BoardState {
   if (!state.staffing) return state;
   const loan = state.staffing.loans.find((item) => item.id === loanId);
   if (!loan) return state;
-  const sourceKey = bookKey(loan.fromOffice, loan.shiftId, state.staffing.counters, state.staffing.apc, state.staffing.kiosks);
+  const sourceKey = staffingBookKey(state.staffing, loan.fromOffice, loan.shiftId);
   const sourceRows = (state.staffing.books[sourceKey] ?? []).map((row) =>
     row.id === loan.personId ? { ...row, cells: loan.sourceShadow.slice() } : row,
   );
@@ -601,7 +634,7 @@ export function setLoanEnd(state: BoardState, loanId: string, end: string | null
   const sourceBooks = { ...staffing.books };
   for (const loan of staffing.loans) {
     if (loan.id !== loanId) continue;
-    const sourceKey = bookKey(loan.fromOffice, loan.shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+    const sourceKey = staffingBookKey(staffing, loan.fromOffice, loan.shiftId);
     const nextLoan = loans.find((item) => item.id === loanId);
     sourceBooks[sourceKey] = (staffing.books[sourceKey] ?? []).map((row) => {
       if (row.id !== loan.personId || !nextLoan) return row;
@@ -891,7 +924,7 @@ export function rosterRows(staffing: StaffingState, officeId: OfficeId) {
 }
 
 export function shiftRoster(staffing: StaffingState, shiftId: ShiftId, source: "stored" | "preview") {
-  const key = bookKey(staffing.officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+  const key = staffingBookKey(staffing, staffing.officeId, shiftId);
   const stored = staffing.books[key];
   const anchor = shiftId === staffing.shiftId;
   let rows: RosterRow[];
@@ -900,6 +933,7 @@ export function shiftRoster(staffing: StaffingState, shiftId: ShiftId, source: "
       counters: staffing.counters,
       apc: staffing.apc,
       kiosks: staffing.kiosks,
+      kioskApc: staffing.kioskApc,
       rules: staffing.rules,
     }, !isExtreme(staffing.rules, shiftId));
   } else if (stored) {
@@ -910,6 +944,7 @@ export function shiftRoster(staffing: StaffingState, shiftId: ShiftId, source: "
       counters: staffing.counters,
       apc: staffing.apc,
       kiosks: staffing.kiosks,
+      kioskApc: staffing.kioskApc,
       rules,
     }, anchor ? !isExtreme(rules, shiftId) : true);
   }
@@ -983,7 +1018,10 @@ export function projectBoard(state: BoardState): BoardState {
         { id: "counter", title: "櫃位", code: "CTR", templateId: "ARR" },
         { id: "apc", title: "APC", code: "APC", templateId: "STBY" },
       ]
-    : [{ id: "kiosk", title: "Kiosk", code: "KIOSK", templateId: "KIOSK" }];
+    : [
+        { id: "kiosk", title: "崗", code: "KIOSK", templateId: "KIOSK" },
+        { id: "apc", title: "APC", code: "APC", templateId: "STBY" },
+      ];
   return {
     ...state,
     shiftName: staffing.shiftId,
@@ -1164,11 +1202,11 @@ export function reflowOffice(state: BoardState): { ok: true; state: BoardState }
 export function generateRoster(
   officeId: OfficeId,
   shiftId: ShiftId,
-  staffing: Pick<StaffingState, "counters" | "apc" | "kiosks" | "rules">,
+  staffing: OpenCounts & Pick<StaffingState, "rules">,
   useSample = true,
 ): RosterRow[] {
   if (useSample) {
-    const known = sampleRows(officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+    const known = sampleRows(officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks, staffing.kioskApc ?? 0);
     if (known) return known.map((row) => ({ ...row, cells: row.cells.slice(), allows: row.allows.slice() }));
   }
   const rules = staffing.rules;
@@ -1337,9 +1375,9 @@ function assignAcrossSlots(plan: string[][], posts: string[], occupancy: Set<str
   }
 }
 
-function sampleRows(officeId: OfficeId, shiftId: ShiftId, counters: number, apc: number, kiosks: number) {
+function sampleRows(officeId: OfficeId, shiftId: ShiftId, counters: number, apc: number, kiosks: number, kioskApc = 0) {
   const staffing = createDefaultStaffing();
-  const key = bookKey(officeId, shiftId, counters, apc, kiosks);
+  const key = bookKey(officeId, shiftId, counters, apc, kiosks, kioskApc);
   return staffing.books[key];
 }
 
@@ -1622,7 +1660,7 @@ function appendShiftPerson(staffing: StaffingState, posts: string[], plans: Map<
 }
 
 function coverSharedPlans(staffing: StaffingState, posts: string[]) {
-  const key = `${staffing.officeId}|${staffing.shiftId}|${posts.length}|${staffing.counters}|${staffing.apc}|${staffing.kiosks}|${JSON.stringify(staffing.rules)}`;
+  const key = `${staffing.officeId}|${staffing.shiftId}|${posts.length}|${staffing.counters}|${staffing.apc}|${staffing.kiosks}|${staffing.kioskApc ?? 0}|${JSON.stringify(staffing.rules)}`;
   const cached = coverCache.get(key);
   if (cached) return cached;
   const sizes = sharedCrewSizes(posts.length, (shiftId) => rulesForShift(staffing, shiftId));
@@ -1727,7 +1765,7 @@ function officePlans(staffing: StaffingState): Map<ShiftId, RosterRow[]> {
     });
   }
   for (const shift of SHIFTS) {
-    const key = bookKey(staffing.officeId, shift.id, staffing.counters, staffing.apc, staffing.kiosks);
+    const key = staffingBookKey(staffing, staffing.officeId, shift.id);
     overlayDutyEdits(grouped.get(shift.id) ?? [], staffing.books[key]);
   }
   for (const shift of SHIFTS) {
@@ -1936,7 +1974,7 @@ function assignShared(workers: SharedWorker[], posts: string[]) {
 
 function storedAllows(staffing: StaffingState, shiftId: ShiftId, code: string): PostKind[] {
   if (!rulesForShift(staffing, shiftId).respectPreference) return [];
-  const key = bookKey(staffing.officeId, shiftId, staffing.counters, staffing.apc, staffing.kiosks);
+  const key = staffingBookKey(staffing, staffing.officeId, shiftId);
   return staffing.books[key]?.find((row) => row.code === code)?.allows.slice() ?? [];
 }
 
