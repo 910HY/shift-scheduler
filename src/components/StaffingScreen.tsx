@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { HeadcountPanel } from "@/components/HeadcountPanel";
 import { PersonSheet } from "@/components/PersonSheet";
 import { QrDialog } from "@/components/QrDialog";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,8 @@ import {
   addOpenPosts,
   apcPosts,
   applyEarlyLeave,
+  applyPreparedRoster,
+  assignByHeadcount,
   bookKey,
   breaksPreference,
   checkRoster,
@@ -92,6 +95,9 @@ export function StaffingScreen() {
     return id && FOCUS_BANDS.some((band) => band.id === id) ? id : "all";
   });
   const [personOpen, setPersonOpen] = useState(false);
+  const [dayPercent, setDayPercent] = useState(50);
+  const [nightPercent, setNightPercent] = useState(30);
+  const [assignError, setAssignError] = useState<string | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
   const clock = useHongKongClock();
 
@@ -110,7 +116,7 @@ export function StaffingScreen() {
   const activeNow = shiftsActiveAt(state.now);
   const previewBook = draft ? shiftRoster(staffing, staffing.shiftId, "preview") : null;
   const checkState = previewBook
-    ? { ...staffing, books: { ...staffing.books, [bookKey(staffing.officeId, staffing.shiftId, staffing.counters, staffing.apc, staffing.kiosks)]: previewBook } }
+    ? { ...staffing, books: { ...staffing.books, [bookKey(staffing.officeId, staffing.shiftId, staffing.counters, staffing.apc, staffing.kiosks, staffing.kioskApc ?? 0)]: previewBook } }
     : staffing;
   const issues = [
     ...checkRoster(checkState).filter((issue) => issue.level === "error" && issue.rule !== "喜好"),
@@ -505,6 +511,35 @@ export function StaffingScreen() {
         </div>
       </section>
 
+      <HeadcountPanel
+        staffing={staffing}
+        dayPercent={dayPercent}
+        nightPercent={nightPercent}
+        onDayPercent={setDayPercent}
+        onNightPercent={setNightPercent}
+        onUseMix={() => {
+          setDayPercent(50);
+          setNightPercent(30);
+        }}
+        error={assignError}
+        onReject={setAssignError}
+        onAssign={(counts) => {
+          const percent = Object.keys(counts).every((id) => id === "A") ? nightPercent : dayPercent;
+          const result = assignByHeadcount(staffing, counts, percent);
+          if (!result.ok) {
+            setAssignError(result.reason);
+            return;
+          }
+          const next = applyPreparedRoster(state, result);
+          board.replace(next);
+          setAssignError(null);
+          setDraft(null);
+          setView("sheet");
+          setFocusId(FOCUS_BANDS.some((band) => band.id === result.focus) ? result.focus : "all");
+          say(result.note);
+        }}
+        onPreviewExcel={() => void downloadPreview()}
+      />
       <p className="shortage" data-testid="shortage">{advice.text}</p>
       {offClock && <p className="off-clock" data-testid="off-clock">{offClock}</p>}
       <p className="overlap-note" data-testid="overlap-shifts">
@@ -515,6 +550,11 @@ export function StaffingScreen() {
         <p className="extreme-banner" data-testid="extreme-banner">
           極端規則：{extremeNotes(staffing.rules, staffing.shiftId).join("；") || "已偏離這更的預設。"}
         </p>
+      )}
+      {staffing.pinnedRoster && (
+        <div className="draft-banner" data-testid="pinned-banner">
+          <p>{staffing.pinnedRoster.note}</p>
+        </div>
       )}
       {draft && (
         <div className="draft-banner" data-testid="draft-banner">

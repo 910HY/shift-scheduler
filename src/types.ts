@@ -109,6 +109,14 @@ export type StaffLoan = {
   sourceShadow: string[];
 };
 
+/** Roster written by 「輸入返工人數 → 一鍵編崗」. Surplus people stay on R. */
+export type PinnedRoster = {
+  percent: number;
+  counts: Partial<Record<ShiftId, number>>;
+  rows: Partial<Record<ShiftId, RosterRow[]>>;
+  note: string;
+};
+
 export type StaffingState = {
   officeId: OfficeId;
   shiftId: ShiftId;
@@ -130,6 +138,8 @@ export type StaffingState = {
   loans: StaffLoan[];
   closures: PostClosure[];
   covers?: PostCover[];
+  /** When set, these shifts keep this assignment instead of the auto crew split. */
+  pinnedRoster?: PinnedRoster;
 };
 
 export type BoardState = {

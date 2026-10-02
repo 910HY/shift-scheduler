@@ -6,6 +6,7 @@ import type {
   BoardState,
   OfficeId,
   Post,
+  PinnedRoster,
   PostCover,
   PostKind,
   RosterRow,
@@ -451,7 +452,7 @@ export function activeRows(staffing: StaffingState) {
 
 export function setOffice(state: BoardState, officeId: OfficeId): BoardState {
   if (!state.staffing) return state;
-  return { ...state, staffing: { ...state.staffing, officeId } };
+  return { ...state, staffing: { ...state.staffing, officeId, pinnedRoster: undefined } };
 }
 
 export function setShift(state: BoardState, shiftId: ShiftId): BoardState {
@@ -476,15 +477,45 @@ export function offClockWarning(now: string, shiftId?: ShiftId) {
   return null;
 }
 
+export function clampPercent(percent: number) {
+  if (!Number.isFinite(percent)) return 0;
+  return Math.min(100, Math.max(0, Math.round(percent * 10) / 10));
+}
+
+export function countsAtPercent(
+  staffing: Pick<StaffingState, "counterMax" | "kioskMax" | "gates" | "gatesPerPost"> & Partial<Pick<StaffingState, "kioskApcMax">>,
+  percent: number,
+) {
+  const clamped = clampPercent(percent);
+  return {
+    percent: clamped,
+    counters: scaleCount(staffing.counterMax, clamped),
+    apc: scaleCount(apcPosts(staffing.gates, staffing.gatesPerPost), clamped),
+    kiosks: scaleCount(staffing.kioskMax, clamped),
+    kioskApc: scaleCount(staffing.kioskApcMax ?? 0, clamped),
+  };
+}
+
+/** Open post codes for one office at a trial percent. Hall ignores kiosks; kiosk ignores counters. */
+export function postsForPercent(staffing: StaffingState, percent: number) {
+  return openPostCodes(staffing.officeId, countsAtPercent(staffing, percent));
+}
+
 export function setPercent(state: BoardState, percent: number): BoardState {
   if (!state.staffing || !Number.isFinite(percent)) return state;
-  const staffing = state.staffing;
-  const clamped = Math.min(100, Math.max(0, Math.round(percent * 10) / 10));
-  const counters = scaleCount(staffing.counterMax, clamped);
-  const apc = scaleCount(apcPosts(staffing.gates, staffing.gatesPerPost), clamped);
-  const kiosks = scaleCount(staffing.kioskMax, clamped);
-  const kioskApc = scaleCount(staffing.kioskApcMax ?? 0, clamped);
-  return { ...state, staffing: { ...staffing, percent: clamped, counters, apc, kiosks, kioskApc } };
+  const next = countsAtPercent(state.staffing, percent);
+  return {
+    ...state,
+    staffing: {
+      ...state.staffing,
+      percent: next.percent,
+      counters: next.counters,
+      apc: next.apc,
+      kiosks: next.kiosks,
+      kioskApc: next.kioskApc,
+      pinnedRoster: undefined,
+    },
+  };
 }
 
 export function setOpenCounts(state: BoardState, patch: Partial<Pick<StaffingState, "counters" | "apc" | "kiosks" | "kioskApc" | "gates" | "gatesPerPost">>): BoardState {
@@ -492,7 +523,7 @@ export function setOpenCounts(state: BoardState, patch: Partial<Pick<StaffingSta
   const next = { ...patch };
   if (next.kiosks != null) next.kiosks = boundedCount(next.kiosks, state.staffing.kioskMax);
   if (next.kioskApc != null) next.kioskApc = boundedCount(next.kioskApc, state.staffing.kioskApcMax ?? KIOSK_APC);
-  return { ...state, staffing: { ...state.staffing, ...next, percent: null } };
+  return { ...state, staffing: { ...state.staffing, ...next, percent: null, pinnedRoster: undefined } };
 }
 
 /** Temporary open posts on top of the current counts. A percent shortcut still returns to the baseline. */
@@ -514,7 +545,7 @@ export function addOpenPosts(state: BoardState, kind: PostKind, count = 1): Boar
 
 export function setRules(state: BoardState, rules: RuleSettings): BoardState {
   if (!state.staffing) return state;
-  return { ...state, staffing: { ...state.staffing, rules } };
+  return { ...state, staffing: { ...state.staffing, rules, pinnedRoster: undefined } };
 }
 
 export function setRowAllows(state: BoardState, rowId: string, allows: PostKind[]): BoardState {
@@ -548,7 +579,8 @@ export function setCell(state: BoardState, rowId: string, slotIndex: number, val
     return { ...row, cells };
   });
   const booked = withBook(view, view.officeId, targetShift, rows);
-  return { ...state, staffing: { ...booked, shiftId: staffing.shiftId } };
+  const pinned = patchPinnedCell(staffing.pinnedRoster, targetShift, rowId, slotIndex, next);
+  return { ...state, staffing: { ...booked, shiftId: staffing.shiftId, pinnedRoster: pinned } };
 }
 
 export function createLoan(
@@ -1196,7 +1228,121 @@ export function reflowOffice(state: BoardState): { ok: true; state: BoardState }
     ...row,
     allows: kept.get(row.id)?.slice() ?? row.allows,
   }));
-  return { ok: true, state: { ...state, staffing: withBook(staffing, staffing.officeId, staffing.shiftId, rows) } };
+  const booked = withBook(staffing, staffing.officeId, staffing.shiftId, rows);
+  return { ok: true, state: { ...state, staffing: { ...booked, pinnedRoster: undefined } } };
+}
+
+export type HeadcountShiftCount = {
+  shiftId: ShiftId;
+  given: number;
+  suggested: number;
+};
+
+export type AssignByHeadcountResult =
+  | {
+      ok: true;
+      percent: number;
+      openPosts: string[];
+      counts: Partial<Record<ShiftId, number>>;
+      rows: Partial<Record<ShiftId, RosterRow[]>>;
+      focus: ShiftId;
+      now: string;
+      note: string;
+      /** Surplus people stay on the sheet as R. Open posts are not increased. */
+      strategy: "spare-on-r";
+    }
+  | { ok: false; reason: string };
+
+/**
+ * Greedy assignment of N people onto the open posts of the selected shifts.
+ * Shifts share one post pool. N below the open-post floor is refused and nothing is written.
+ * N above the need keeps everyone on the sheet; extra slots are R (後備), posts are not added.
+ */
+export function assignByHeadcount(
+  staffing: StaffingState,
+  counts: Partial<Record<ShiftId, number>>,
+  percent: number,
+): AssignByHeadcountResult {
+  const chosen = SHIFTS.map((shift) => shift.id).filter((id) => Math.floor(counts[id] ?? 0) > 0);
+  if (!chosen.length) return { ok: false, reason: "請揀至少一個更，再輸入返工人數。未寫入編表。" };
+  const hasNight = chosen.includes("A");
+  const hasDay = chosen.some((id) => id !== "A");
+  if (hasNight && hasDay) {
+    return { ok: false, reason: "日更同 A 更開崗％唔同，請分開一鍵編。未寫入編表。" };
+  }
+  const clamped = clampPercent(percent);
+  const posts = postsForPercent(staffing, clamped);
+  if (!posts.length) return { ok: false, reason: `${officeLabel(staffing.officeId)} 按 ${clamped}% 開 0 崗，冇崗位可編。未寫入編表。` };
+  const planned = chosen.map((shiftId) => ({
+    shiftId,
+    given: Math.floor(counts[shiftId] ?? 0),
+    suggested: requiredCrew(
+      posts.length,
+      shiftOf(shiftId).hours,
+      awayHours(shiftId, rulesForShift(staffing, shiftId)),
+    ),
+  }));
+  const early = earliestShortage(planned, posts.length);
+  if (early) return { ok: false, reason: understaffReason(staffing, clamped, posts.length, planned, early, true) };
+
+  const workers = workersForCounts(staffing, posts, planned);
+  const gaps = solveAssignment(workers, posts, chosen);
+  if (gaps.length) {
+    const worst = [...gaps].sort((left, right) => right.missing - left.missing || left.at.localeCompare(right.at))[0]!;
+    return { ok: false, reason: understaffReason(staffing, clamped, posts.length, planned, worst, false) };
+  }
+  const rows: Partial<Record<ShiftId, RosterRow[]>> = {};
+  const seen = new Map<ShiftId, number>();
+  for (const worker of workers) {
+    const count = (seen.get(worker.shiftId) ?? 0) + 1;
+    seen.set(worker.shiftId, count);
+    const code = `K${count}`;
+    const list = rows[worker.shiftId] ?? [];
+    list.push({
+      id: rowId(staffing.officeId, code),
+      code,
+      allows: worker.allows.slice(),
+      cells: worker.cells.slice(),
+    });
+    rows[worker.shiftId] = list;
+  }
+  const now = clockForShifts(chosen);
+  const focus = chosen.find((id) => shiftCovers(id, now)) ?? chosen[0]!;
+  const labels = planned.map((item) => `${item.shiftId} ${item.given} 人`).join("、");
+  const note = `已將 ${labels} 編上 ${officeLabel(staffing.officeId)}（${clamped}%、開 ${posts.length} 崗）。多過開崗嘅人留後備 R，只填滿開崗，冇加開崗位。重疊更共用一個崗位池，同時在崗唔等於各更人數相加。可撳「生成 Preview Excel」。`;
+  const givenCounts: Partial<Record<ShiftId, number>> = {};
+  for (const item of planned) givenCounts[item.shiftId] = item.given;
+  return {
+    ok: true,
+    percent: clamped,
+    openPosts: posts,
+    counts: givenCounts,
+    rows,
+    focus,
+    now,
+    note,
+    strategy: "spare-on-r",
+  };
+}
+
+export function applyPreparedRoster(state: BoardState, result: Extract<AssignByHeadcountResult, { ok: true }>): BoardState {
+  const scaled = setPercent(state, result.percent);
+  const shifted = setShift(scaled, result.focus);
+  if (!shifted.staffing) return state;
+  return {
+    ...shifted,
+    now: result.now,
+    shiftName: result.focus,
+    staffing: {
+      ...shifted.staffing,
+      pinnedRoster: {
+        percent: result.percent,
+        counts: result.counts,
+        rows: result.rows,
+        note: result.note,
+      },
+    },
+  };
 }
 
 export function generateRoster(
@@ -1727,7 +1873,7 @@ function coverSharedPlans(staffing: StaffingState, posts: string[]) {
 /** One post pool for the office. Overlapping shifts share it; a post is never doubled. */
 function officePlans(staffing: StaffingState): Map<ShiftId, RosterRow[]> {
   const posts = openPostCodes(staffing.officeId, staffing);
-  const sized = coverSharedPlans(staffing, posts);
+  const sized = plansWithPinned(coverSharedPlans(staffing, posts), staffing.pinnedRoster);
   const workers: SharedWorker[] = [];
   const allowedByShift = new Map<ShiftId, number>();
   for (const shift of SHIFTS) {
@@ -1750,6 +1896,7 @@ function officePlans(staffing: StaffingState): Map<ShiftId, RosterRow[]> {
     }
   }
   assignShared(workers, posts);
+  applyPinnedCells(workers, staffing.pinnedRoster);
   const grouped = new Map<ShiftId, RosterRow[]>();
   for (const shift of SHIFTS) grouped.set(shift.id, []);
   const seen = new Map<ShiftId, number>();
@@ -1760,7 +1907,7 @@ function officePlans(staffing: StaffingState): Map<ShiftId, RosterRow[]> {
     grouped.get(worker.shiftId)?.push({
       id: rowId(staffing.officeId, code),
       code,
-      allows: [],
+      allows: worker.allows.slice(),
       cells: worker.cells,
     });
   }
@@ -1913,6 +2060,13 @@ function assignShared(workers: SharedWorker[], posts: string[]) {
       if (index < 0) continue;
       const cell = worker.cells[index] ?? "";
       if (cell) {
+        if (!isRestCode(cell) && !isGapCell(cell) && posts.includes(cell) && !taken.has(cell)) {
+          taken.add(cell);
+          seats.push({ post: cell, start, end: endFor(worker.shiftId) });
+          worker.current = cell;
+          worker.afterRest = false;
+          continue;
+        }
         if (worker.current) worker.previous = worker.current;
         worker.current = "";
         worker.afterRest = worker.previous !== "";
@@ -2109,6 +2263,221 @@ function shiftEndOrder(shiftId: ShiftId, anchorStart: number, overnight: boolean
   const end = timeToMinutes(shift.end);
   if (end < start) return end + DAY_MINUTES;
   return slotOrder(end, anchorStart, overnight);
+}
+
+function patchPinnedCell(pinned: PinnedRoster | undefined, shiftId: ShiftId, rowIdValue: string, slotIndex: number, value: string) {
+  const rows = pinned?.rows[shiftId];
+  if (!pinned || !rows) return pinned;
+  let changed = false;
+  const nextRows = rows.map((row) => {
+    if (row.id !== rowIdValue) return row;
+    changed = true;
+    const cells = row.cells.slice();
+    cells[slotIndex] = value;
+    return { ...row, cells };
+  });
+  if (!changed) return pinned;
+  return { ...pinned, rows: { ...pinned.rows, [shiftId]: nextRows } };
+}
+
+function plansWithPinned(base: Map<ShiftId, string[][]>, pinned?: PinnedRoster) {
+  if (!pinned) return base;
+  const copy = new Map<ShiftId, string[][]>();
+  for (const shift of SHIFTS) {
+    const override = pinned.rows[shift.id];
+    if (override) copy.set(shift.id, override.map((row) => row.cells.slice()));
+    else copy.set(shift.id, (base.get(shift.id) ?? []).map((cells) => cells.slice()));
+  }
+  return copy;
+}
+
+function applyPinnedCells(workers: SharedWorker[], pinned?: PinnedRoster) {
+  if (!pinned) return;
+  const seen = new Map<ShiftId, number>();
+  for (const worker of workers) {
+    const index = seen.get(worker.shiftId) ?? 0;
+    seen.set(worker.shiftId, index + 1);
+    const row = pinned.rows[worker.shiftId]?.[index];
+    if (!row) continue;
+    worker.cells = row.cells.slice();
+    worker.allows = row.allows.slice();
+  }
+}
+
+function lookupAllows(staffing: StaffingState, shiftId: ShiftId, code: string): PostKind[] {
+  const prefix = `${staffing.officeId}|${shiftId}|`;
+  for (const [key, rows] of Object.entries(staffing.books)) {
+    if (!key.startsWith(prefix)) continue;
+    const found = rows.find((row) => row.code === code);
+    if (found?.allows.length) return found.allows.slice();
+  }
+  return [];
+}
+
+function workersForCounts(staffing: StaffingState, posts: string[], planned: HeadcountShiftCount[]) {
+  const workers: SharedWorker[] = [];
+  for (const item of planned) {
+    const rules = rulesForShift(staffing, item.shiftId);
+    const plan = buildShiftPlan(item.shiftId, {
+      counters: staffing.counters,
+      apc: staffing.apc,
+      kiosks: staffing.kiosks,
+      rules,
+    }, posts, true, item.given);
+    const slots = memoSlots(item.shiftId);
+    plan.forEach((cells, index) => {
+      const code = `K${index + 1}`;
+      workers.push({
+        shiftId: item.shiftId,
+        rules,
+        slots,
+        cells: cells.slice(),
+        previous: "",
+        current: "",
+        afterRest: false,
+        counts: new Map(),
+        allows: rules.respectPreference ? lookupAllows(staffing, item.shiftId, code) : [],
+      });
+    });
+  }
+  return workers;
+}
+
+function headsAt(planned: HeadcountShiftCount[], slot: string) {
+  let have = 0;
+  for (const item of planned) {
+    if (memoSlots(item.shiftId).includes(slot)) have += item.given;
+  }
+  return have;
+}
+
+function earliestShortage(planned: HeadcountShiftCount[], openPosts: number) {
+  let worst: { at: string; missing: number; have: number } | null = null;
+  const times = new Set<string>();
+  for (const item of planned) for (const slot of memoSlots(item.shiftId)) times.add(slot);
+  for (const slot of times) {
+    const have = headsAt(planned, slot);
+    if (have >= openPosts) continue;
+    const missing = openPosts - have;
+    if (!worst || missing > worst.missing) worst = { at: slot, missing, have };
+  }
+  return worst;
+}
+
+function understaffReason(
+  staffing: StaffingState,
+  percent: number,
+  openPosts: number,
+  planned: HeadcountShiftCount[],
+  gap: { at: string; missing: number; have: number },
+  belowOpen: boolean,
+) {
+  const who = planned.map((item) => `${item.shiftId} 輸入 ${item.given} 人（單獨包場建議 ${item.suggested}）`).join("，");
+  const because = belowOpen ? "人數少過開崗" : "跟休息／meal 之後未能填滿開崗";
+  return `${officeLabel(staffing.officeId)} 按 ${percent}% 開 ${openPosts} 崗。${who}。${gap.at} 在更 ${gap.have} 人，${because}，缺 ${gap.missing} 個崗。建議減開崗％或減崗，或者加返工人數。未寫入編表。`;
+}
+
+function clockForShifts(ids: ShiftId[]) {
+  let best = shiftOf(ids[0] ?? "B2").start;
+  let bestScore = -1;
+  for (let minute = 0; minute < DAY_MINUTES; minute += 15) {
+    const clock = formatMinute(minute);
+    const score = ids.filter((id) => shiftCovers(id, clock)).length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = clock;
+    }
+  }
+  return best;
+}
+
+function gapTotal(gaps: { missing: number }[]) {
+  return gaps.reduce((sum, gap) => sum + gap.missing, 0);
+}
+
+function findAssignmentGaps(workers: SharedWorker[], posts: string[], shiftIds: ShiftId[]) {
+  const times = new Set<string>();
+  for (const id of shiftIds) for (const slot of memoSlots(id)) times.add(slot);
+  const gaps: { at: string; missing: number; have: number }[] = [];
+  for (const slot of times) {
+    const present = workers.filter((worker) => shiftIds.includes(worker.shiftId) && worker.slots.includes(slot));
+    if (!present.length) continue;
+    const busy = new Set<string>();
+    for (const worker of present) {
+      const cell = worker.cells[worker.slots.indexOf(slot)] ?? "";
+      if (cell && !isRestCode(cell) && !isGapCell(cell)) busy.add(cell);
+    }
+    const missing = posts.filter((code) => !busy.has(code)).length;
+    if (missing > 0) gaps.push({ at: slot, missing, have: present.length });
+  }
+  return gaps;
+}
+
+function solveAssignment(workers: SharedWorker[], posts: string[], shiftIds: ShiftId[]) {
+  const base = workers.map((worker) => worker.cells.slice());
+  const freed: { worker: number; index: number }[] = [];
+  const place = () => {
+    workers.forEach((worker, index) => {
+      const cells = base[index]?.slice() ?? [];
+      for (const stamp of freed) {
+        if (stamp.worker !== index) continue;
+        if (cells[stamp.index] === "R") cells[stamp.index] = "";
+      }
+      worker.cells = cells;
+      worker.previous = "";
+      worker.current = "";
+      worker.afterRest = false;
+      worker.counts = new Map();
+    });
+    assignShared(workers, posts);
+  };
+  place();
+  let best = workers.map((worker) => worker.cells.slice());
+  let bestMissing = gapTotal(findAssignmentGaps(workers, posts, shiftIds));
+  if (bestMissing === 0) return [];
+  const limit = Math.max(8, posts.length * shiftIds.length * 6);
+  let idle = 0;
+  for (let guard = 0; guard < limit && bestMissing > 0; guard += 1) {
+    const gaps = findAssignmentGaps(workers, posts, shiftIds)
+      .sort((left, right) => right.missing - left.missing || left.at.localeCompare(right.at));
+    const stamp = freePlannedRest(workers, base, freed, gaps);
+    if (!stamp) break;
+    freed.push(stamp);
+    place();
+    const missing = gapTotal(findAssignmentGaps(workers, posts, shiftIds));
+    if (missing < bestMissing) {
+      bestMissing = missing;
+      best = workers.map((worker) => worker.cells.slice());
+      idle = 0;
+    } else {
+      idle += 1;
+    }
+    if (idle > posts.length) break;
+  }
+  workers.forEach((worker, index) => {
+    worker.cells = best[index]?.slice() ?? worker.cells;
+  });
+  if (bestMissing === 0) return [];
+  return findAssignmentGaps(workers, posts, shiftIds);
+}
+
+function freePlannedRest(
+  workers: SharedWorker[],
+  base: string[][],
+  freed: { worker: number; index: number }[],
+  gaps: { at: string }[],
+) {
+  for (const gap of gaps) {
+    for (let index = 0; index < workers.length; index += 1) {
+      const worker = workers[index];
+      if (!worker) continue;
+      const slot = worker.slots.indexOf(gap.at);
+      if (slot < 0 || base[index]?.[slot] !== "R") continue;
+      if (freed.some((stamp) => stamp.worker === index && stamp.index === slot)) continue;
+      return { worker: index, index: slot };
+    }
+  }
+  return null;
 }
 
 function personFromRow(row: RosterRow, order: number, shift: ShiftDef, shiftId: ShiftId): Staff {
