@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { HeadcountPanel } from "@/components/HeadcountPanel";
+import { PersonSheet } from "@/components/PersonSheet";
+import { QrDialog } from "@/components/QrDialog";
 import { Button } from "@/components/ui/button";
 import { assignStaff } from "@/logic/board";
 import { splitStaffCode } from "@/logic/label";
@@ -8,6 +10,8 @@ import { nowPlace, presenceTotals } from "@/logic/presence";
 import {
   EARLY_CELL,
   FOCUS_BANDS,
+  KIOSK_APC,
+  KIOSK_POSTS,
   OFFICES,
   PERCENT_SHORTCUTS,
   SHIFTS,
@@ -49,7 +53,6 @@ import {
   setRowAllows,
   setRules,
   setShift,
-  shiftBoard,
   shiftCovers,
   shiftOf,
   shiftRoster,
@@ -57,6 +60,7 @@ import {
   shortageAdvice,
   siteCapacity,
   siteOverview,
+  visibleKioskCounts,
   slotIndexAt,
   slotStarts,
 } from "@/logic/staffing";
@@ -94,6 +98,7 @@ export function StaffingScreen() {
   const [dayPercent, setDayPercent] = useState(50);
   const [nightPercent, setNightPercent] = useState(30);
   const [assignError, setAssignError] = useState<string | null>(null);
+  const [qrOpen, setQrOpen] = useState(false);
   const clock = useHongKongClock();
 
   if (!staffing) return null;
@@ -111,7 +116,7 @@ export function StaffingScreen() {
   const activeNow = shiftsActiveAt(state.now);
   const previewBook = draft ? shiftRoster(staffing, staffing.shiftId, "preview") : null;
   const checkState = previewBook
-    ? { ...staffing, books: { ...staffing.books, [bookKey(staffing.officeId, staffing.shiftId, staffing.counters, staffing.apc, staffing.kiosks)]: previewBook } }
+    ? { ...staffing, books: { ...staffing.books, [bookKey(staffing.officeId, staffing.shiftId, staffing.counters, staffing.apc, staffing.kiosks, staffing.kioskApc ?? 0)]: previewBook } }
     : staffing;
   const issues = [
     ...checkRoster(checkState).filter((issue) => issue.level === "error" && issue.rule !== "喜好"),
@@ -421,21 +426,40 @@ export function StaffingScreen() {
               </label>
             </>
           ) : (
-            <label className="ops-metric">
-              <span className="ops-metric-label">Kiosk</span>
-              <input
-                aria-label="Kiosk 數"
-                data-testid="open-kiosks"
-                type="number"
-                min={0}
-                inputMode="numeric"
-                value={staffing.kiosks}
-                onChange={(event) => {
-                  board.replace(setOpenCounts(state, { kiosks: numberOrZero(event.target.value) }));
-                  setDraft(null);
-                }}
-              />
-            </label>
+            <>
+              <label className="ops-metric">
+                <span className="ops-metric-label">崗</span>
+                <input
+                  aria-label="崗數"
+                  data-testid="open-kiosks"
+                  type="number"
+                  min={0}
+                  max={KIOSK_POSTS}
+                  inputMode="numeric"
+                  value={visibleKioskCounts(staffing).posts}
+                  onChange={(event) => {
+                    board.replace(setOpenCounts(state, { kiosks: numberOrZero(event.target.value) }));
+                    setDraft(null);
+                  }}
+                />
+              </label>
+              <label className="ops-metric">
+                <span className="ops-metric-label">APC</span>
+                <input
+                  aria-label="Kiosk APC 崗數"
+                  data-testid="open-kiosk-apc"
+                  type="number"
+                  min={0}
+                  max={KIOSK_APC}
+                  inputMode="numeric"
+                  value={visibleKioskCounts(staffing).apc}
+                  onChange={(event) => {
+                    board.replace(setOpenCounts(state, { kioskApc: numberOrZero(event.target.value) }));
+                    setDraft(null);
+                  }}
+                />
+              </label>
+            </>
           )}
         </div>
         <div className="ops-add-posts span-2" role="group" aria-label="臨時加崗位">
@@ -447,8 +471,9 @@ export function StaffingScreen() {
             </>
           ) : (
             <>
-              <button type="button" data-testid="add-kiosk" onClick={() => addPosts("kiosk", 1)}>+1 Kiosk</button>
-              <button type="button" data-testid="add-kiosks" onClick={() => addPosts("kiosk", 2)}>+2 Kiosk</button>
+              <button type="button" data-testid="add-kiosk" onClick={() => addPosts("kiosk", 1)}>+1 崗</button>
+              <button type="button" data-testid="add-kiosks" onClick={() => addPosts("kiosk", 2)}>+2 崗</button>
+              <button type="button" data-testid="add-kiosk-apc" onClick={() => addPosts("apc", 1)}>+1 APC</button>
             </>
           )}
         </div>
@@ -471,6 +496,9 @@ export function StaffingScreen() {
           </button>
           <button type="button" data-testid="view-sheet" className={view === "sheet" ? "is-on" : ""} onClick={() => setView("sheet")}>
             編崗
+          </button>
+          <button type="button" data-testid="open-qr" onClick={() => setQrOpen(true)}>
+            產生 QR
           </button>
           <button type="button" data-testid="preview-excel" className="is-primary" onClick={() => void downloadPreview()}>
             生成 Preview Excel
@@ -691,7 +719,7 @@ export function StaffingScreen() {
             ))}
           </ul>
           <p>
-            全場合計：現在 {site.onSite}，崗位 {site.filled}／{site.total}，共需 {site.crew}。開滿容量 {siteCapacity(staffing.counterMax, staffing.gates, staffing.gatesPerPost, staffing.kioskMax)} 崗。
+            全場合計：現在 {site.onSite}，崗位 {site.filled}／{site.total}，共需 {site.crew}。開滿容量 {siteCapacity(staffing.counterMax, staffing.gates, staffing.gatesPerPost, staffing.kioskMax, staffing.kioskApcMax)} 崗。
           </p>
         </section>
       )}
@@ -703,6 +731,15 @@ export function StaffingScreen() {
           office={focus.label}
           target={personTarget}
           onClose={() => setPersonOpen(false)}
+        />
+      )}
+
+      {qrOpen && (
+        <QrDialog
+          date={state.date}
+          staffing={staffing}
+          onDate={(date) => board.replace({ ...state, date })}
+          onClose={() => setQrOpen(false)}
         />
       )}
 
@@ -991,7 +1028,7 @@ function SettingsPanel({
   onOpenEarly: () => void;
   onRevoke: (id: string) => void;
   onLoanEnd: (id: string, end: string | null) => void;
-  onCounts: (patch: { counters?: number; apc?: number; kiosks?: number; gates?: number; gatesPerPost?: number }) => void;
+  onCounts: (patch: { counters?: number; apc?: number; kiosks?: number; kioskApc?: number; gates?: number; gatesPerPost?: number }) => void;
 }) {
   const rules = staffing.rules;
   const officeLoans = staffing.loans.filter((loan) => loan.shiftId === staffing.shiftId && (loan.fromOffice === staffing.officeId || loan.toOffice === staffing.officeId));
@@ -1015,10 +1052,18 @@ function SettingsPanel({
       <label className="num-row">日間休息轉數<input type="number" min={0} step={1} value={rules.restTurns} onChange={(event) => onRules({ ...rules, restTurns: Number(event.target.value) })} /></label>
       <h2>開崗數</h2>
       <OpenTotals staffing={staffing} />
-      <label className="num-row">櫃位<input aria-label="櫃位數" type="number" min={0} value={staffing.counters} onChange={(event) => onCounts({ counters: Number(event.target.value) })} /></label>
-      <label className="num-row">APC<input aria-label="APC 崗數" type="number" min={0} value={staffing.apc} onChange={(event) => onCounts({ apc: Number(event.target.value) })} /></label>
-      <label className="num-row">Kiosk<input aria-label="Kiosk 數" type="number" min={0} value={staffing.kiosks} onChange={(event) => onCounts({ kiosks: Number(event.target.value) })} /></label>
-      <label className="num-row">閘數<input aria-label="閘數" type="number" min={0} value={staffing.gates} onChange={(event) => onCounts({ gates: Number(event.target.value) })} /></label>
+      {officeOf(staffing.officeId).kind === "hall" ? (
+        <>
+          <label className="num-row">櫃位<input aria-label="櫃位數" type="number" min={0} value={staffing.counters} onChange={(event) => onCounts({ counters: Number(event.target.value) })} /></label>
+          <label className="num-row">APC<input aria-label="APC 崗數" type="number" min={0} value={staffing.apc} onChange={(event) => onCounts({ apc: Number(event.target.value) })} /></label>
+          <label className="num-row">閘數<input aria-label="閘數" type="number" min={0} value={staffing.gates} onChange={(event) => onCounts({ gates: Number(event.target.value) })} /></label>
+        </>
+      ) : (
+        <>
+          <label className="num-row">崗<input aria-label="崗數" type="number" min={0} max={KIOSK_POSTS} value={visibleKioskCounts(staffing).posts} onChange={(event) => onCounts({ kiosks: Number(event.target.value) })} /></label>
+          <label className="num-row">APC<input aria-label="Kiosk APC 崗數" type="number" min={0} max={KIOSK_APC} value={visibleKioskCounts(staffing).apc} onChange={(event) => onCounts({ kioskApc: Number(event.target.value) })} /></label>
+        </>
+      )}
       <h2>喜好</h2>
       {selected ? (
         <>
@@ -1053,13 +1098,15 @@ function SettingsPanel({
 
 function OpenTotals({ staffing, compact = false }: { staffing: StaffingState; compact?: boolean }) {
   const hall = officeOf(staffing.officeId).kind === "hall";
-  // Zone-relevant open counts (Hall has no Kiosk posts; Kiosk office has no 櫃位/APC).
   const parts = hall
     ? [
         { key: "counter", label: "櫃位", value: staffing.counters },
         { key: "apc", label: "APC", value: staffing.apc },
       ]
-    : [{ key: "kiosk", label: "Kiosk", value: staffing.kiosks }];
+    : [
+        { key: "kiosk", label: "崗", value: visibleKioskCounts(staffing).posts },
+        { key: "apc", label: "APC", value: visibleKioskCounts(staffing).apc },
+      ];
   const summary = parts.map((part) => `${part.value} ${part.label}`).join(" · ");
   const pctNote = staffing.percent != null ? `${staffing.percent}%` : "自訂";
   return (
@@ -1296,65 +1343,3 @@ function resolvePerson(selectedId: string | null, fallback: ShiftId): { shiftId:
   return { shiftId: fallback, rowId: selectedId };
 }
 
-function printCell(value: string) {
-  if (!value) return "—";
-  if (isLoanMarker(value)) return "借";
-  return value;
-}
-
-function PersonSheet({
-  staffing,
-  date,
-  office,
-  target,
-  onClose,
-}: {
-  staffing: StaffingState;
-  date: string;
-  office: string;
-  target: { shiftId: ShiftId; rowId: string };
-  onClose: () => void;
-}) {
-  const board = shiftBoard(staffing, target.shiftId);
-  const row = board.rows.find((item) => item.id === target.rowId);
-  const shift = shiftOf(target.shiftId);
-  const badge = splitStaffCode(row?.code ?? "", target.shiftId);
-  return (
-    <section className="person-sheet" data-testid="person-sheet" role="dialog" aria-label="個人更表">
-      <header className="person-sheet-head">
-        <div>
-          <p className="stat-kicker">個人崗位</p>
-          <h2>{badge.label || target.rowId}</h2>
-          <p>
-            更 {target.shiftId} · 工號 {badge.code || "—"} · {shift.start}–{shift.end}
-            {target.shiftId === "A" ? "（跨日）" : ""} · {office} · {date}
-          </p>
-        </div>
-        <div className="no-print quick-row">
-          <Button type="button" data-testid="print-person" onClick={() => window.print()}>列印</Button>
-          <Button type="button" variant="outline" onClick={onClose}>返回</Button>
-        </div>
-      </header>
-      {row ? (
-        <table className="person-table">
-          <thead>
-            <tr>
-              <th>時間</th>
-              <th>崗位</th>
-            </tr>
-          </thead>
-          <tbody>
-            {board.slots.map((slot, index) => (
-              <tr key={slot}>
-                <th>{slot}</th>
-                <td>{printCell(row.cells[index] ?? "")}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <p>搵唔到呢個人嘅更表。</p>
-      )}
-    </section>
-  );
-}

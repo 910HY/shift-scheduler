@@ -33,7 +33,7 @@ export function HeadcountPanel({
   const office = officeOf(staffing.officeId);
   const fullOpen = office.kind === "hall"
     ? hallMax(staffing.counterMax, staffing.gates, staffing.gatesPerPost)
-    : staffing.kioskMax;
+    : staffing.kioskMax + (staffing.kioskApcMax ?? 0);
   const here = shiftOf(staffing.shiftId);
   const [picked, setPicked] = useState<Partial<Record<ShiftId, boolean>>>({ B1: true, B2: true });
   const [counts, setCounts] = useState<Partial<Record<ShiftId, string>>>({});

@@ -125,10 +125,13 @@ export type StaffingState = {
   counters: number;
   apc: number;
   kiosks: number;
+  /** APC posts open in a Kiosk office. Hall APC stays on `apc`. */
+  kioskApc: number;
   gates: number;
   gatesPerPost: number;
   counterMax: number;
   kioskMax: number;
+  kioskApcMax: number;
   rules: RuleSettings;
   lockedCodes: string[];
   books: Record<string, RosterRow[]>;

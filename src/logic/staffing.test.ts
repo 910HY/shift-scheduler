@@ -66,9 +66,15 @@ describe("capacity and crew", () => {
   it("derives APC posts from gates divided by six and the full site", () => {
     expect(apcPosts(60, 6)).toBe(10);
     expect(hallMax(30, 60, 6)).toBe(40);
-    expect(siteCapacity(30, 60, 6, 12)).toBe(104);
+    expect(siteCapacity(30, 60, 6, 4, 2)).toBe(92);
     expect(scaleCount(12, 30)).toBe(4);
     expect(scaleCount(30, 50)).toBe(15);
+    const staffing = createDefaultStaffing();
+    expect(staffing.kiosks).toBe(4);
+    expect(staffing.kioskMax).toBe(4);
+    expect(staffing.kioskApc).toBe(2);
+    expect(staffing.kioskApcMax).toBe(2);
+    expect(siteCapacity(staffing.counterMax, staffing.gates, staffing.gatesPerPost, staffing.kioskMax, staffing.kioskApcMax)).toBe(92);
   });
 
   it("estimates B2 Arr Hall at full open as 52 people", () => {
@@ -103,7 +109,8 @@ describe("capacity and crew", () => {
     expect(next.percent).toBe(40);
     expect(next.counters).toBe(12);
     expect(next.apc).toBe(4);
-    expect(next.kiosks).toBe(5);
+    expect(next.kiosks).toBe(2);
+    expect(next.kioskApc).toBe(1);
     expect(crewFor(next)).toBe(requiredCrew(16, 6.5, 1.5));
     expect(previewFilename(next)).toBe("preview-arr-hall-b2-40pct.xlsx");
     const typed = setOpenCounts(board(), { counters: 7 }).staffing!;
@@ -124,16 +131,60 @@ describe("office focus", () => {
     expect(hall?.filled).toBeGreaterThan(0);
     expect(hall?.filled).toBeLessThanOrEqual(40);
     expect(hall?.onSite).toBeGreaterThan(0);
-    expect(kiosk?.total).toBe(12);
+    expect(kiosk?.total).toBe(6);
     expect(kiosk?.onSite).toBeGreaterThan(0);
     expect(kiosk?.onSite).toBeLessThan(hall!.onSite);
     const site = siteOverview(state);
-    expect(site.total).toBe(104);
+    expect(site.total).toBe(92);
     expect(site.onSite).toBeGreaterThan(hall!.onSite);
     const overlapping = officeFocus({ ...board(), now: "13:09" }, "arr-hall");
     expect(shiftsActiveAt("13:09")).toEqual(expect.arrayContaining(["B2", "B1", "C2"]));
     expect(shiftsActiveAt("13:10")).toEqual(["B1", "C2", "E1"]);
     expect(overlapping?.onSite).toBeGreaterThan(52);
+  });
+
+  it("opens Arr Kiosk and Dep Kiosk at 4 posts plus 2 APC", () => {
+    const demo = createAppSeed();
+    for (const officeId of ["arr-kiosk", "dep-kiosk"] as const) {
+      const staffing = { ...demo.staffing!, officeId };
+      expect(openPostCodes(officeId, staffing)).toEqual(["A1", "A2", "A3", "A4", "Apc 1", "Apc 2"]);
+      const shown = projectBoard({ ...demo, staffing });
+      expect(shown.zones.map((zone) => zone.title)).toEqual(["崗", "APC"]);
+      expect(shown.posts.filter((post) => post.zoneId === "kiosk").map((post) => post.name)).toEqual(["A1", "A2", "A3", "A4"]);
+      expect(shown.posts.filter((post) => post.zoneId === "apc").map((post) => post.name)).toEqual(["Apc 1", "Apc 2"]);
+      expect(shown.posts.filter((post) => post.assigneeId)).toHaveLength(6);
+      const focus = officeFocus({ ...demo, staffing }, officeId);
+      expect(focus?.total).toBe(6);
+      expect(focus?.filled).toBe(6);
+    }
+    expect(openPostCodes("arr-hall", demo.staffing!)).toHaveLength(40);
+    expect(demo.staffing?.counters).toBe(30);
+    expect(demo.staffing?.apc).toBe(10);
+    expect(crewFor({ ...demo.staffing!, officeId: "arr-kiosk" }, "arr-kiosk")).toBe(requiredCrew(6, 6.5, 1.5));
+    expect(crewFor({ ...demo.staffing!, officeId: "dep-kiosk" }, "dep-kiosk")).toBe(requiredCrew(6, 6.5, 1.5));
+    expect(crewFor(demo.staffing!, "arr-hall")).toBe(requiredCrew(40, 6.5, 1.5));
+  });
+
+  it("hides retired A5–A12 and keeps a saved 12-booth board on the new cap", () => {
+    const over = { ...createDefaultStaffing(), officeId: "arr-kiosk" as const, kiosks: 12, kioskApc: 9 };
+    expect(openPostCodes("arr-kiosk", over)).toEqual(["A1", "A2", "A3", "A4", "Apc 1", "Apc 2"]);
+    expect(openPostCodes("dep-kiosk", over).join(" ")).not.toMatch(/A(?:[5-9]|1[0-2])/);
+    const typed = setOpenCounts(setOffice(board(), "dep-kiosk"), { kiosks: 12, kioskApc: 8 }).staffing!;
+    expect(typed.kiosks).toBe(4);
+    expect(typed.kioskApc).toBe(2);
+    expect(crewFor(typed, "dep-kiosk")).toBe(8);
+    const legacy = ensureStaffing({
+      ...createAppSeed(),
+      staffing: { ...createDefaultStaffing(), kiosks: 12, kioskMax: 12, kioskApc: 0, kioskApcMax: 0, percent: 100, books: { legacy: [] } },
+    });
+    expect(legacy.staffing?.kioskMax).toBe(4);
+    expect(legacy.staffing?.kioskApcMax).toBe(2);
+    expect(legacy.staffing?.kiosks).toBe(4);
+    expect(legacy.staffing?.kioskApc).toBe(2);
+    expect(openPostCodes("arr-kiosk", legacy.staffing!)).toEqual(["A1", "A2", "A3", "A4", "Apc 1", "Apc 2"]);
+    const half = setPercent(setOffice(board(), "arr-kiosk"), 50).staffing!;
+    expect(openPostCodes("arr-kiosk", half)).toEqual(["A1", "A2", "Apc 1"]);
+    expect(crewFor(half, "arr-kiosk")).toBe(requiredCrew(3, 6.5, 1.5));
   });
 });
 
@@ -146,10 +197,17 @@ describe("sample rosters", () => {
   });
 
   it("accepts the A kiosk sheet for a 2.5h break and a 2h work cap", () => {
-    const state = setPercent(board(), 30);
-    const staffing = { ...state.staffing!, officeId: "arr-kiosk" as const, shiftId: "A" as const, rules: defaultRules("A") };
+    const staffing = {
+      ...createDefaultStaffing(),
+      officeId: "arr-kiosk" as const,
+      shiftId: "A" as const,
+      kiosks: 4,
+      kioskApc: 0,
+      rules: defaultRules("A"),
+    };
     const errors = checkRoster(staffing).filter((issue) => issue.level === "error");
     expect(errors).toEqual([]);
+    expect(staffing.books[bookKey("arr-kiosk", "A", 9, 3, 4, 0)]?.length).toBeGreaterThan(0);
   });
 
   it("stops flagging consecutive R when that rule is switched off", () => {
@@ -593,8 +651,9 @@ describe("overlapping shifts", () => {
       expect(duty.length).toBe(40);
 
       const kiosk = filledAt(now, "arr-kiosk");
-      expect(kiosk.total).toBe(12);
-      expect(kiosk.filled).toBe(12);
+      expect(kiosk.total).toBe(6);
+      expect(kiosk.filled).toBe(6);
+      expect(kiosk.shown.posts.map((post) => post.name)).toEqual(["A1", "A2", "A3", "A4", "Apc 1", "Apc 2"]);
       expect(kiosk.shown.staff.some((person) => person.shift === "A")).toBe(false);
     }
 
@@ -944,16 +1003,22 @@ describe("temporary posts", () => {
     expect(values.has("Apc 1")).toBe(true);
   });
 
-  it("adds kiosk posts only on a kiosk office", () => {
+  it("adds kiosk posts only on a kiosk office, and stops at A4 plus 2 APC", () => {
     const hall = addOpenPosts(board(), "kiosk", 2);
     expect(hall.staffing?.kiosks).toBe(createDefaultStaffing().kiosks);
     const kiosk = {
       ...board(),
-      staffing: { ...createDefaultStaffing(), officeId: "arr-kiosk" as const, kiosks: 4, books: {}, percent: null },
+      staffing: { ...createDefaultStaffing(), officeId: "arr-kiosk" as const, kiosks: 2, kioskApc: 1, books: {}, percent: null },
     };
     const added = addOpenPosts(kiosk, "kiosk", 2);
-    expect(added.staffing?.kiosks).toBe(6);
-    expect(openPostCodes("arr-kiosk", added.staffing!)).toEqual(["A1", "A2", "A3", "A4", "A5", "A6"]);
+    expect(added.staffing?.kiosks).toBe(4);
+    expect(openPostCodes("arr-kiosk", added.staffing!)).toEqual(["A1", "A2", "A3", "A4", "Apc 1"]);
+    const capped = addOpenPosts(added, "kiosk", 2);
+    expect(capped.staffing?.kiosks).toBe(4);
+    const withApc = addOpenPosts(addOpenPosts(capped, "apc", 1), "apc", 1);
+    expect(withApc.staffing?.kioskApc).toBe(2);
+    expect(withApc.staffing?.apc).toBe(capped.staffing?.apc);
+    expect(openPostCodes("arr-kiosk", withApc.staffing!).join(" ")).not.toMatch(/A(?:[5-9]|1[0-2])/);
     expect(crewFor(added.staffing!)).toBeGreaterThan(crewFor(kiosk.staffing!));
     expect(addOpenPosts(added, "counter", 1).staffing?.counters).toBe(added.staffing?.counters);
   });

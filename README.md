@@ -4,7 +4,7 @@
 
 呢個 repo 之前係「即日編更」手機 MVP（Flask + 靜態時間軸）。而家 `/` 係渣板，舊檔留喺 `archive/shift-mobile-mvp/`，唔再係正式站。
 
-沒有登入、多人即時同步。Arr Hall、Dep Hall、Arr Kiosk、Dep Kiosk 各自編崗。Hall 開滿是櫃位 30 加 APC 10（60 閘 ÷ 6）。Kiosk 開滿 12。全場 104。
+沒有登入、多人即時同步。Arr Hall、Dep Hall、Arr Kiosk、Dep Kiosk 各自編崗。Hall 開滿是櫃位 30 加 APC 10（60 閘 ÷ 6）。Arr Kiosk、Dep Kiosk 開滿各是 4 崗（A1–A4）加 APC 2，合計 6。舊 12 亭（A5–A12）唔再係預設全開。全場 92。
 
 顏色集中在 `src/theme.css`。在崗 `#2F6B4F`、休息 `#C9872A`（深色字）、早走／遲返 `#B5473A`、空缺虛線 `#9AA3B2`、場地 `#F4F5F7`、選中框 `#3B6FD8`。崗位區淡罩 `#E8F0EC`，休息區淡罩 `#F8F0E4`。
 
@@ -32,6 +32,34 @@ PORT=10000 npm start
 ```
 
 開 <http://127.0.0.1:10000>。`GET /api/health` 應回 `{"ok":true,"solver":"ortools"}`。`POST /api/solve` 同畫面「重算未鎖定」用同一個路徑。
+
+## 掃 QR 睇崗
+
+主程式開崗列有 **產生 QR**。揀日期（跟而家編更日）、辦公區；員工再揀一個人。畫面出真正 QR，同可複製嘅 deep link。QR 入面就係呢條網址，唔係假圖。
+
+```bash
+npm run dev
+```
+
+電腦開 <http://127.0.0.1:4317>，撳 **產生 QR**。
+
+`npm run dev` 開住之後，另一個終端機可以一次過影 Mark 清單嘅六張圖（要本機有 Chrome；路徑唔同就設 `CHROME_PATH`）：
+
+```bash
+npm run shots:qr
+```
+
+檔案喺 `shots/`：`qr-gen-staff.png`、`qr-gen-supervisor.png`、`qr-staff-day.png`、`qr-staff-print.png`、`qr-supervisor-day.png`、`qr-bad-link.png`。
+
+- 員工（掃完即係呢個人全日崗位，可列印，冇主導航）：`/?view=person&staff=K4&shift=B2&date=2026-09-28&loc=arr-hall`
+- 主管（該日該區全日只讀總覽）：`/?view=supervisor&date=2026-09-28&loc=arr-hall`
+- 壞 link 會出錯誤，例如 `/?view=person` 或 `/?view=supervisor&date=2026-09-28&loc=roof`
+
+`loc` 係 `arr-hall`、`dep-hall`、`arr-kiosk`、`dep-kiosk`。產生出嚟嘅員工 QR 會帶埋 `cells`，另一部手機或隱身窗開到都係嗰個人嘅崗位，唔使喺 App 入面再搵工號。冇 `cells` 嘅短 link 就讀**呢個瀏覽器**嘅編更；日期要同本機編更日一樣，否則會話日期對唔上。
+
+本機試玩：`localhost`／`127.0.0.1` 只係產生 QR 嗰部電腦開到。手機要同一 Wi-Fi，用 `npm run dev` 印出嘅局域网網址（`http://<電腦IP>:4317/...`）先掃到。現場要用手機開到嘅網址（已批核嘅內網）先有用。
+
+V1 冇登入。當試玩／內網。未批唔好把排更放到公開互聯網。
 
 ## 部署（Render）
 

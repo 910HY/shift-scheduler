@@ -112,11 +112,12 @@ describe("headcount trial", () => {
     expect(handoff?.message).toContain("唔等於");
   });
 
-  it("counts a kiosk at 50% as six posts", () => {
+  it("counts a kiosk at 4 posts plus 2 APC", () => {
     const staffing = { ...createDefaultStaffing(), officeId: "arr-kiosk" as const };
     const trial = headcountTrial(staffing, 50, 30);
-    expect(trial.lines.find((line) => line.shiftId === "B2")).toMatchObject({ openPosts: 6, percent: 50 });
-    expect(trial.lines.find((line) => line.shiftId === "A")).toMatchObject({ openPosts: 4, percent: 30 });
+    expect(postsForPercent(staffing, 100)).toEqual(["A1", "A2", "A3", "A4", "Apc 1", "Apc 2"]);
+    expect(trial.lines.find((line) => line.shiftId === "B2")).toMatchObject({ openPosts: 3, percent: 50 });
+    expect(trial.lines.find((line) => line.shiftId === "A")).toMatchObject({ openPosts: 2, percent: 30, end: "06:45" });
   });
 });
 

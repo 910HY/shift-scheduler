@@ -686,7 +686,7 @@ select {
 }
 
 .ops-metrics.is-kiosk {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .ops-metric {
@@ -999,7 +999,8 @@ select {
   flex-wrap: wrap;
   gap: 8px;
 }
-.focus-band button {
+.focus-band button,
+.focus-band p {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1012,19 +1013,28 @@ select {
   color: #fff;
   padding: 6px 10px;
   text-align: left;
+  margin: 0;
 }
-.focus-band button strong { font-size: 16px; font-weight: 800; line-height: 1.1; }
+.focus-band button strong,
+.focus-band p strong { font-size: 16px; font-weight: 800; line-height: 1.1; }
 .focus-band button span,
-.focus-band button em { font-size: 12px; font-style: normal; font-weight: 650; font-variant-numeric: tabular-nums; }
-.focus-band button.is-on {
+.focus-band button em,
+.focus-band p span,
+.focus-band p em { font-size: 12px; font-style: normal; font-weight: 650; font-variant-numeric: tabular-nums; }
+.focus-band button.is-on,
+.focus-band p.is-on {
   background: #fff;
   color: #141820;
   border-color: #fff;
 }
-.focus-band button[data-shift="B2"].is-on { box-shadow: inset 4px 0 0 #1d4f91; }
-.focus-band button[data-shift="E1"].is-on { box-shadow: inset 4px 0 0 #6d28d9; }
-.focus-band button[data-shift="E"].is-on { box-shadow: inset 4px 0 0 #0369a1; }
-.focus-band button[data-shift="A"].is-on { box-shadow: inset 4px 0 0 #334155; }
+.focus-band button[data-shift="B2"].is-on,
+.focus-band p[data-shift="B2"].is-on { box-shadow: inset 4px 0 0 #1d4f91; }
+.focus-band button[data-shift="E1"].is-on,
+.focus-band p[data-shift="E1"].is-on { box-shadow: inset 4px 0 0 #6d28d9; }
+.focus-band button[data-shift="E"].is-on,
+.focus-band p[data-shift="E"].is-on { box-shadow: inset 4px 0 0 #0369a1; }
+.focus-band button[data-shift="A"].is-on,
+.focus-band p[data-shift="A"].is-on { box-shadow: inset 4px 0 0 #334155; }
 
 .floor-status {
   display: flex;
@@ -1075,8 +1085,64 @@ select {
 }
 .person-table thead th { background: #f3f4f6; }
 
+.person-home {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid #c5cad3;
+  background: #fff;
+  color: #1a1d23;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.scan-shell { min-height: 100svh; background: var(--bg-canvas); color: var(--ink-primary); }
+.scan-error { max-width: 36rem; margin: 0 auto; padding: 32px 16px 48px; }
+.scan-error h1 { margin: 0 0 8px; font-size: 28px; font-weight: 800; }
+.scan-error-copy { margin: 0 0 16px; font-size: 16px; line-height: 1.5; }
+.scan-overview { padding: 0 0 48px; }
+.scan-overview-head { padding: 16px 16px 8px; }
+.scan-overview-head h1 { margin: 0; font-size: 28px; font-weight: 800; }
+.scan-overview-head p { margin: 4px 0 0; }
+.scan-shift { padding: 8px 12px 0; }
+.scan-shift h2 { margin: 12px 0 8px; font-size: 18px; font-weight: 800; }
+.scan-person-card {
+  background: #fff;
+  border: 1px solid #e7e9ee;
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+.scan-slots { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.scan-slots .cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 64px;
+  border-radius: 8px;
+  border: 1px solid #e7e9ee;
+  padding: 4px 6px;
+}
+.scan-slots small { font-size: 11px; color: #5c6370; font-weight: 650; }
+.scan-slots b { font-size: 14px; font-weight: 700; }
+.qr-dialog { width: min(480px, calc(100vw - 16px)); }
+.qr-preview { display: flex; justify-content: center; background: #fff; padding: 8px 0; }
+.qr-preview svg { width: min(240px, 72vw); height: auto; }
+.qr-link { font-family: var(--font-mono); font-size: 13px; }
+.qr-note { font-size: 13px; line-height: 1.45; color: var(--ink-secondary); }
+.qr-dialog a { color: #1a1d23; font-weight: 700; }
+
+@media (max-width: 760px) {
+  .person-sheet { padding: 16px 12px 32px; }
+  .person-sheet h2 { font-size: 24px; }
+  .scan-overview-head h1 { font-size: 24px; }
+}
+
 @media print {
-  .v10-shell:has(.person-sheet) > :not(.person-sheet) { display: none !important; }
+  .v10-shell:has(.person-sheet) > :not(.person-sheet),
+  .scan-shell:has(.person-sheet) > :not(.person-sheet) { display: none !important; }
   .person-sheet {
     position: static !important;
     overflow: visible !important;
@@ -1443,7 +1509,7 @@ select {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .ops-metrics.is-kiosk {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .ops-metric {
     padding: 10px;
