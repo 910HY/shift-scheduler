@@ -1321,6 +1321,21 @@ select {
   border-color: #2f6b4f;
 }
 
+.hc-callout {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #eef1f6;
+  color: var(--ink-primary, #1a1d23);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.hc-callout.is-night,
+.headcount-table tr.is-night td {
+  background: #e8eef8;
+}
+
 .headcount-scroll {
   overflow-x: auto;
   max-width: 100%;

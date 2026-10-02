@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { headcountTrial } from "@/logic/headcount";
-import { SHIFTS, officeLabel } from "@/logic/staffing";
+import { SHIFTS, hallMax, officeLabel, officeOf, shiftOf } from "@/logic/staffing";
 import type { ShiftId, StaffingState } from "@/types";
 
 export function HeadcountPanel({
@@ -28,7 +28,13 @@ export function HeadcountPanel({
 }) {
   const trial = headcountTrial(staffing, dayPercent, nightPercent);
   const dayOpen = trial.lines.find((line) => line.band === "day")?.openPosts ?? 0;
-  const nightOpen = trial.lines.find((line) => line.shiftId === "A")?.openPosts ?? 0;
+  const nightLine = trial.lines.find((line) => line.shiftId === "A");
+  const nightOpen = nightLine?.openPosts ?? 0;
+  const office = officeOf(staffing.officeId);
+  const fullOpen = office.kind === "hall"
+    ? hallMax(staffing.counterMax, staffing.gates, staffing.gatesPerPost)
+    : staffing.kioskMax;
+  const here = shiftOf(staffing.shiftId);
   const [picked, setPicked] = useState<Partial<Record<ShiftId, boolean>>>({ B1: true, B2: true });
   const [counts, setCounts] = useState<Partial<Record<ShiftId, string>>>({});
 
@@ -93,6 +99,9 @@ export function HeadcountPanel({
             />
           </label>
         </div>
+        <p className="hc-callout" data-testid="hc-day-summary">
+          日更 {dayPercent}%：開滿 {fullOpen} 崗 × {dayPercent}% = 開 {dayOpen} 崗（同時在崗需求）。各更建議已計休息／meal，見下表。
+        </p>
         <div className="headcount-scroll">
         <table className="headcount-table" data-testid="headcount-table">
           <thead>
@@ -106,7 +115,7 @@ export function HeadcountPanel({
           </thead>
           <tbody>
             {trial.lines.map((line) => (
-              <tr key={line.shiftId} data-testid={`headcount-row-${line.shiftId}`}>
+              <tr key={line.shiftId} data-testid={`headcount-row-${line.shiftId}`} className={line.shiftId === "A" ? "is-night" : undefined}>
                 <td>{line.shiftId}</td>
                 <td>{line.start}–{line.end}</td>
                 <td>{line.percent}%</td>
@@ -117,6 +126,9 @@ export function HeadcountPanel({
           </tbody>
         </table>
         </div>
+        <p className="hc-callout is-night" data-testid="hc-a-summary">
+          A 更 {nightPercent}%：開滿 {fullOpen} 崗 × {nightPercent}% = 開 {nightOpen} 崗，建議 {nightLine?.suggested ?? 0} 人（含大休）。A 完結 {nightLine?.end ?? "06:45"}。
+        </p>
         <div data-testid="overlap-explain">
           {trial.overlaps.map((item) => (
             <p key={item.at} data-testid={`overlap-at-${item.at.replace(":", "")}`}>{item.message}</p>
@@ -132,9 +144,9 @@ export function HeadcountPanel({
         }}
       >
         <h2>輸入返工人數 · 一鍵編崗</h2>
-        <p>
-          目標區：{officeLabel(staffing.officeId)}（用上面區掣改）。主管可以喺 A 更準備下一更：揀 B1／B2（或單獨一個更），輸入呢更有幾多人返工。
-          開崗跟上面試算：日更用日更％，淨係編 A 就用 A％。預設日更 50%、A 30%。唔使登入。
+        <p data-testid="prepare-context">
+          而家視角 {staffing.shiftId}（{here.start}–{here.end}）。目標區 {officeLabel(staffing.officeId)}。
+          準備編下面剔住嘅更（A 更時可編 B1／B2）。開崗跟上面試算，日更預設 50%。唔使登入。
         </p>
         <ul className="roster-n-list">
           {SHIFTS.map((shift) => (
