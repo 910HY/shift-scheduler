@@ -33,6 +33,26 @@ PORT=10000 npm start
 
 開 <http://127.0.0.1:10000>。`GET /api/health` 應回 `{"ok":true,"solver":"ortools"}`。`POST /api/solve` 同畫面「重算未鎖定」用同一個路徑。
 
+## 掃 QR 睇崗
+
+主程式開崗列有 **產生 QR**。揀日期（跟而家編更日）、辦公區；員工再揀一個人。畫面出真正 QR，同可複製嘅 deep link。QR 入面就係呢條網址，唔係假圖。
+
+```bash
+npm run dev
+```
+
+電腦開 <http://127.0.0.1:4317>，撳 **產生 QR**。
+
+- 員工（掃完即係呢個人全日崗位，可列印，冇主導航）：`/?view=person&staff=K4&shift=B2&date=2026-09-28&loc=arr-hall`
+- 主管（該日該區全日只讀總覽）：`/?view=supervisor&date=2026-09-28&loc=arr-hall`
+- 壞 link 會出錯誤，例如 `/?view=person` 或 `/?view=supervisor&date=2026-09-28&loc=roof`
+
+`loc` 係 `arr-hall`、`dep-hall`、`arr-kiosk`、`dep-kiosk`。產生出嚟嘅員工 QR 會帶埋 `cells`，另一部手機或隱身窗開到都係嗰個人嘅崗位，唔使喺 App 入面再搵工號。冇 `cells` 嘅短 link 就讀**呢個瀏覽器**嘅編更；日期要同本機編更日一樣，否則會話日期對唔上。
+
+本機試玩：`localhost`／`127.0.0.1` 只係產生 QR 嗰部電腦開到。手機要同一 Wi-Fi，用 `npm run dev` 印出嘅局域网網址（`http://<電腦IP>:4317/...`）先掃到。現場要用手機開到嘅網址（已批核嘅內網）先有用。
+
+V1 冇登入。當試玩／內網。未批唔好把排更放到公開互聯網。
+
 ## 部署（Render）
 
 正式站用 **Dockerfile**：Node 階段 `npm ci && npm run build` 出 `dist/`，Python 階段裝 `server/requirements-prod.txt`（含 ortools），再用 gunicorn + uvicorn worker 喺 `$PORT` 同時提供靜態頁同 `/api/*`。非 API、要 HTML 嘅路徑會回 `index.html`（SPA）。求解 worker timeout 係 **180 秒**，workers **1**（OR-Tools 食 CPU 同記憶體）。

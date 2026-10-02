@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { PersonSheet } from "@/components/PersonSheet";
+import { QrDialog } from "@/components/QrDialog";
 import { Button } from "@/components/ui/button";
 import { assignStaff } from "@/logic/board";
 import { splitStaffCode } from "@/logic/label";
@@ -46,7 +48,6 @@ import {
   setRowAllows,
   setRules,
   setShift,
-  shiftBoard,
   shiftCovers,
   shiftOf,
   shiftRoster,
@@ -88,6 +89,7 @@ export function StaffingScreen() {
     return id && FOCUS_BANDS.some((band) => band.id === id) ? id : "all";
   });
   const [personOpen, setPersonOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
   const clock = useHongKongClock();
 
   if (!staffing) return null;
@@ -466,6 +468,9 @@ export function StaffingScreen() {
           <button type="button" data-testid="view-sheet" className={view === "sheet" ? "is-on" : ""} onClick={() => setView("sheet")}>
             編崗
           </button>
+          <button type="button" data-testid="open-qr" onClick={() => setQrOpen(true)}>
+            產生 QR
+          </button>
           <button type="button" data-testid="preview-excel" className="is-primary" onClick={() => void downloadPreview()}>
             生成 Preview Excel
           </button>
@@ -663,6 +668,15 @@ export function StaffingScreen() {
           office={focus.label}
           target={personTarget}
           onClose={() => setPersonOpen(false)}
+        />
+      )}
+
+      {qrOpen && (
+        <QrDialog
+          date={state.date}
+          staffing={staffing}
+          onDate={(date) => board.replace({ ...state, date })}
+          onClose={() => setQrOpen(false)}
         />
       )}
 
@@ -1256,65 +1270,3 @@ function resolvePerson(selectedId: string | null, fallback: ShiftId): { shiftId:
   return { shiftId: fallback, rowId: selectedId };
 }
 
-function printCell(value: string) {
-  if (!value) return "—";
-  if (isLoanMarker(value)) return "借";
-  return value;
-}
-
-function PersonSheet({
-  staffing,
-  date,
-  office,
-  target,
-  onClose,
-}: {
-  staffing: StaffingState;
-  date: string;
-  office: string;
-  target: { shiftId: ShiftId; rowId: string };
-  onClose: () => void;
-}) {
-  const board = shiftBoard(staffing, target.shiftId);
-  const row = board.rows.find((item) => item.id === target.rowId);
-  const shift = shiftOf(target.shiftId);
-  const badge = splitStaffCode(row?.code ?? "", target.shiftId);
-  return (
-    <section className="person-sheet" data-testid="person-sheet" role="dialog" aria-label="個人更表">
-      <header className="person-sheet-head">
-        <div>
-          <p className="stat-kicker">個人崗位</p>
-          <h2>{badge.label || target.rowId}</h2>
-          <p>
-            更 {target.shiftId} · 工號 {badge.code || "—"} · {shift.start}–{shift.end}
-            {target.shiftId === "A" ? "（跨日）" : ""} · {office} · {date}
-          </p>
-        </div>
-        <div className="no-print quick-row">
-          <Button type="button" data-testid="print-person" onClick={() => window.print()}>列印</Button>
-          <Button type="button" variant="outline" onClick={onClose}>返回</Button>
-        </div>
-      </header>
-      {row ? (
-        <table className="person-table">
-          <thead>
-            <tr>
-              <th>時間</th>
-              <th>崗位</th>
-            </tr>
-          </thead>
-          <tbody>
-            {board.slots.map((slot, index) => (
-              <tr key={slot}>
-                <th>{slot}</th>
-                <td>{printCell(row.cells[index] ?? "")}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <p>搵唔到呢個人嘅更表。</p>
-      )}
-    </section>
-  );
-}

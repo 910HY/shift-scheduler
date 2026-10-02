@@ -1083,16 +1083,31 @@ export function previewRows(staffing: StaffingState) {
   return combinedRoster(staffing, "preview").rows;
 }
 
-/** One person's shift, with every slot of that duty — not clipped to the focused overlap. */
-export function shiftBoard(staffing: StaffingState, shiftId: ShiftId): { slots: string[]; rows: RosterRow[] } {
-  const slots = slotStarts(shiftId);
-  const rows = (officePlans(staffing).get(shiftId) ?? []).map((row) => ({
+function publishShiftRows(shiftId: ShiftId, rows: RosterRow[]): RosterRow[] {
+  return rows.map((row) => ({
     ...row,
     allows: row.allows.slice(),
     cells: row.cells.slice(),
     code: row.code.startsWith(`${shiftId} `) ? row.code : `${shiftId} ${row.code}`,
   }));
-  return { slots, rows };
+}
+
+/** One person's shift, with every slot of that duty — not clipped to the focused overlap. */
+export function shiftBoard(staffing: StaffingState, shiftId: ShiftId): { slots: string[]; rows: RosterRow[] } {
+  return {
+    slots: slotStarts(shiftId),
+    rows: publishShiftRows(shiftId, officePlans(staffing).get(shiftId) ?? []),
+  };
+}
+
+/** Full duty board for every shift at this office, from one plan pass. */
+export function dayBoards(staffing: StaffingState): { shiftId: ShiftId; slots: string[]; rows: RosterRow[] }[] {
+  const plans = officePlans(staffing);
+  return SHIFTS.map((shift) => ({
+    shiftId: shift.id,
+    slots: slotStarts(shift.id),
+    rows: publishShiftRows(shift.id, plans.get(shift.id) ?? []),
+  }));
 }
 
 export function previewFilename(staffing: StaffingState) {
