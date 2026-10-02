@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { HeadcountPanel } from "@/components/HeadcountPanel";
 import { Button } from "@/components/ui/button";
 import { assignStaff } from "@/logic/board";
 import { splitStaffCode } from "@/logic/label";
@@ -14,6 +15,8 @@ import {
   addOpenPosts,
   apcPosts,
   applyEarlyLeave,
+  applyPreparedRoster,
+  assignByHeadcount,
   bookKey,
   breaksPreference,
   checkRoster,
@@ -88,6 +91,9 @@ export function StaffingScreen() {
     return id && FOCUS_BANDS.some((band) => band.id === id) ? id : "all";
   });
   const [personOpen, setPersonOpen] = useState(false);
+  const [dayPercent, setDayPercent] = useState(50);
+  const [nightPercent, setNightPercent] = useState(30);
+  const [assignError, setAssignError] = useState<string | null>(null);
   const clock = useHongKongClock();
 
   if (!staffing) return null;
@@ -477,6 +483,35 @@ export function StaffingScreen() {
         </div>
       </section>
 
+      <HeadcountPanel
+        staffing={staffing}
+        dayPercent={dayPercent}
+        nightPercent={nightPercent}
+        onDayPercent={setDayPercent}
+        onNightPercent={setNightPercent}
+        onUseMix={() => {
+          setDayPercent(50);
+          setNightPercent(30);
+        }}
+        error={assignError}
+        onReject={setAssignError}
+        onAssign={(counts) => {
+          const percent = Object.keys(counts).every((id) => id === "A") ? nightPercent : dayPercent;
+          const result = assignByHeadcount(staffing, counts, percent);
+          if (!result.ok) {
+            setAssignError(result.reason);
+            return;
+          }
+          const next = applyPreparedRoster(state, result);
+          board.replace(next);
+          setAssignError(null);
+          setDraft(null);
+          setView("sheet");
+          setFocusId(FOCUS_BANDS.some((band) => band.id === result.focus) ? result.focus : "all");
+          say(result.note);
+        }}
+        onPreviewExcel={() => void downloadPreview()}
+      />
       <p className="shortage" data-testid="shortage">{advice.text}</p>
       {offClock && <p className="off-clock" data-testid="off-clock">{offClock}</p>}
       <p className="overlap-note" data-testid="overlap-shifts">
@@ -487,6 +522,11 @@ export function StaffingScreen() {
         <p className="extreme-banner" data-testid="extreme-banner">
           極端規則：{extremeNotes(staffing.rules, staffing.shiftId).join("；") || "已偏離這更的預設。"}
         </p>
+      )}
+      {staffing.pinnedRoster && (
+        <div className="draft-banner" data-testid="pinned-banner">
+          <p>{staffing.pinnedRoster.note}</p>
+        </div>
       )}
       {draft && (
         <div className="draft-banner" data-testid="draft-banner">
